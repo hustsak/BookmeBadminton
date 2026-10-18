@@ -143,6 +143,33 @@ export function LoginModal() {
               {tab === "login" ? "Sign In to BookMeBadminton" : "Create Account"}
               <ArrowRight className="h-4 w-4" />
             </button>
+
+            {/* Quick Demo Role Switcher */}
+            <div className="mt-4 pt-3 border-t border-[#edf1eb]">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#8b958e] block mb-2 text-center">
+                Quick Demo Sign-In
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    login("alex.nguyen@example.com", "Alex Nguyen", "CUSTOMER");
+                  }}
+                  className="flex-1 rounded-xl border border-[#dbe3d8] bg-[#f8faf7] py-2 text-[11px] font-bold text-[#17201c] hover:bg-[#edf4e8] transition"
+                >
+                  🏸 Player (Alex)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    login("owner1@bookme.test", "Smash Management", "OWNER");
+                  }}
+                  className="flex-1 rounded-xl border border-[#dbe3d8] bg-[#f8faf7] py-2 text-[11px] font-bold text-[#17201c] hover:bg-[#edf4e8] transition"
+                >
+                  🏢 Venue Owner
+                </button>
+              </div>
+            </div>
           </form>
         </motion.div>
       </div>

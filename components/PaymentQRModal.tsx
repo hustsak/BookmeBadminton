@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   X,
@@ -15,6 +15,9 @@ import {
   Building2,
   Clock,
   ArrowRight,
+  Maximize2,
+  Minimize2,
+  AlertCircle,
 } from "lucide-react";
 
 interface PaymentQRModalProps {
@@ -26,6 +29,8 @@ interface PaymentQRModalProps {
   date: string;
   timeSlot: string;
   totalPrice: number;
+  bookingId?: number;
+  bookingCode?: string;
 }
 
 export function PaymentQRModal({
@@ -37,20 +42,44 @@ export function PaymentQRModal({
   date,
   timeSlot,
   totalPrice,
+  bookingId,
+  bookingCode,
 }: PaymentQRModalProps) {
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [copiedMemo, setCopiedMemo] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+  const [isQREnlarged, setIsQREnlarged] = useState(false);
 
   const bankNumber = "8840511196";
   const bankName = "BIDV - CN Sơn Tây";
   const accountHolder = "KOY VIRAKSAK";
-  const memoContent = `BMB ${courtName.replace(/\s+/g, "")} ${date.slice(-5).replace("-", "")}`;
+  const memoContent = bookingCode
+    ? `BMB ${bookingCode}`
+    : `BMB ${courtName.replace(/\s+/g, "")} ${date.slice(-5).replace("-", "")}`;
 
   const formatPriceVND = (price: number) => {
     return `${price.toLocaleString("en-US")}₫`;
   };
+
+  // Keyboard accessibility: Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isQREnlarged) {
+          setIsQREnlarged(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isQREnlarged, onClose]);
 
   const copyToClipboard = (text: string, type: "account" | "memo") => {
     navigator.clipboard.writeText(text);
@@ -63,30 +92,57 @@ export function PaymentQRModal({
     }
   };
 
-  const handlePaid = () => {
+  const handlePaid = async () => {
     setIsVerifying(true);
-    // Simulate real-time payment gateway verification
-    setTimeout(() => {
+    setPaymentError("");
+
+    try {
+      if (bookingId) {
+        // Call server-side payment verification
+        const res = await fetch(`/api/bookings/${bookingId}/payment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paymentMethod: "VIETQR",
+            transactionRef: `BIDV-${Date.now().toString(36).toUpperCase()}`,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || "Failed to verify payment with server.");
+        }
+      }
+
       setIsVerifying(false);
       setIsSuccess(true);
 
       setTimeout(() => {
         onPaymentSuccess();
       }, 900);
-    }, 1200);
+    } catch (err: any) {
+      console.error("Payment verification failed:", err);
+      setIsVerifying(false);
+      setPaymentError(err.message || "Could not verify payment. Please check your bank transaction.");
+    }
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="payment-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+        >
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/65 backdrop-blur-md"
+            className="fixed inset-0 bg-black/70 backdrop-blur-md"
           />
 
           {/* Modal Container */}
@@ -95,27 +151,28 @@ export function PaymentQRModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 20 }}
             transition={{ type: "spring", stiffness: 350, damping: 28 }}
-            className="relative z-10 w-full max-w-md max-h-[92vh] overflow-y-auto rounded-[32px] border border-[#e1e7df] bg-white p-4 sm:p-6 shadow-[0_24px_70px_rgba(23,32,28,0.28)] select-none my-auto transform-gpu will-change-transform"
+            className="relative z-10 w-full max-w-md max-h-[92vh] overflow-y-auto rounded-[32px] border border-[#e1e7df] bg-white p-3.5 sm:p-6 shadow-[0_24px_70px_rgba(23,32,28,0.28)] select-none my-auto transform-gpu will-change-transform"
           >
             {/* Top Navigation */}
             <div className="flex items-center justify-between pb-2.5 sm:pb-3 border-b border-[#edf1ea]">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#f0fae1] text-[#4f781a]">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#f0fae1] text-[#4f781a] shrink-0">
                   <QrCode className="h-4 w-4" />
                 </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-extrabold text-[#17201c]">
-                    Scan QR to Pay Court Fee
+                <div className="min-w-0">
+                  <h3 id="payment-modal-title" className="text-sm sm:text-base font-extrabold text-[#17201c] truncate">
+                    Payment QR (VietQR Transfer)
                   </h3>
-                  <p className="text-[11px] text-[#7d8881]">
-                    VietQR 24/7 instant bank transfer
+                  <p className="text-[10.5px] text-[#7d8881] truncate">
+                    Official 24/7 banking transfer
                   </p>
                 </div>
               </div>
 
               <button
                 onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f3f5f1] text-[#17201c] hover:bg-[#e7ebe4] active:scale-90 transition"
+                aria-label="Close payment modal"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f3f5f1] text-[#17201c] hover:bg-[#e7ebe4] active:scale-90 transition shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -146,21 +203,21 @@ export function PaymentQRModal({
             ) : (
               <div className="mt-3 space-y-2.5 sm:space-y-3.5">
                 {/* Court Fee Summary Card */}
-                <div className="rounded-2xl bg-[#f7f9f6] border border-[#e3e9e1] p-3 sm:p-3.5 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-[#86948b]">
+                <div className="rounded-2xl bg-[#f7f9f6] border border-[#e3e9e1] p-3 sm:p-3.5 flex items-center justify-between gap-2 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[9.5px] uppercase font-bold text-[#86948b] block">
                       Court & Time
                     </span>
-                    <p className="text-xs font-black text-[#17201c]">
+                    <p className="text-xs font-black text-[#17201c] truncate">
                       {venueName} · {courtName}
                     </p>
-                    <p className="text-[11px] text-[#637267]">
+                    <p className="text-[11px] text-[#637267] truncate">
                       {date} · {timeSlot}
                     </p>
                   </div>
 
-                  <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold text-[#86948b]">
+                  <div className="text-right shrink-0">
+                    <span className="text-[9.5px] uppercase font-bold text-[#86948b] block">
                       Total Fee
                     </span>
                     <p className="text-base sm:text-lg font-black text-[#2e570c]">
@@ -169,19 +226,48 @@ export function PaymentQRModal({
                   </div>
                 </div>
 
-                {/* QR Code Frame */}
-                <div className="relative mx-auto flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#a8e63d] bg-white p-2.5 sm:p-3 shadow-inner">
-                  <div className="relative overflow-hidden rounded-xl border border-[#e1e7df] shadow-sm max-w-[165px] sm:max-w-[205px]">
-                    <img
-                      src="/court_image/QRpay.jpg"
-                      alt="VietQR Payment - KOY VIRAKSAK"
-                      className="w-full h-auto object-contain select-none pointer-events-none"
-                    />
+                {/* QR Code Frame with Tap-to-Enlarge feature */}
+                <div className="relative mx-auto flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#a8e63d] bg-white p-2.5 sm:p-3 shadow-inner w-full">
+                  <div className="relative group cursor-pointer" onClick={() => setIsQREnlarged(!isQREnlarged)}>
+                    <div
+                      className={`relative overflow-hidden rounded-xl border border-[#e1e7df] shadow-sm transition-all duration-200 ${
+                        isQREnlarged
+                          ? "max-w-[280px] sm:max-w-[320px] scale-105"
+                          : "max-w-[160px] sm:max-w-[200px]"
+                      }`}
+                    >
+                      <img
+                        src="/court_image/QRpay.jpg"
+                        alt="VietQR Payment - KOY VIRAKSAK"
+                        className="w-full h-auto object-contain select-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsQREnlarged(!isQREnlarged);
+                      }}
+                      className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-[#17201c]/80 backdrop-blur-md px-2 py-1 text-[10px] font-bold text-[#a8e63d] shadow-md hover:bg-[#17201c]"
+                    >
+                      {isQREnlarged ? (
+                        <>
+                          <Minimize2 className="h-3 w-3" />
+                          <span>Shrink</span>
+                        </>
+                      ) : (
+                        <>
+                          <Maximize2 className="h-3 w-3" />
+                          <span>Enlarge QR</span>
+                        </>
+                      )}
+                    </button>
                   </div>
 
-                  <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-[#456e17]">
+                  <div className="mt-2 flex items-center gap-1.5 text-[10.5px] font-bold text-[#456e17]">
                     <ShieldCheck className="h-3.5 w-3.5" />
-                    <span>Official BIDV VietQR Payment</span>
+                    <span>Official BIDV VietQR Payment (Not a check-in pass)</span>
                   </div>
                 </div>
 
@@ -229,6 +315,13 @@ export function PaymentQRModal({
                     </button>
                   </div>
                 </div>
+
+                {paymentError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs font-semibold text-red-700 flex items-start gap-1.5">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{paymentError}</span>
+                  </div>
+                )}
 
                 {/* Confirm Action Button */}
                 <div className="pt-1">

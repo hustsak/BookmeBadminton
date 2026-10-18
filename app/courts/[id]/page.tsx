@@ -1,24 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   AlertCircle,
   ArrowLeft,
   Calendar,
-  CalendarDays,
   Check,
+  CheckCircle2,
+  Clock,
   Clock3,
+  Copy,
+  Info,
   LayoutGrid,
   Lock,
   MapPin,
   Minus,
+  Phone,
   Plus,
+  Printer,
+  QrCode,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Star,
   Table,
+  User,
   Users,
+  Wrench,
   X,
   Zap,
 } from "lucide-react";
@@ -28,95 +37,96 @@ import { Navbar } from "@/components/Navbar";
 import { LoginModal } from "@/components/LoginModal";
 import { CalendarModal } from "@/components/CalendarModal";
 import { PaymentQRModal } from "@/components/PaymentQRModal";
-import { useApp, Booking } from "@/context/AppContext";
+import { useApp } from "@/context/AppContext";
 
 type Court = {
   id: number;
   name: string;
   priceHour: number;
+  image?: string;
+  surface?: string;
 };
 
 type Venue = {
   id: number;
   name: string;
   location: string;
+  address?: string;
   rating: number;
   reviewCount: number;
   description: string;
   imageUrl: string;
+  openTime?: string;
+  closeTime?: string;
   courts: Court[];
 };
 
-const venues: Record<string, Venue> = {
+type SlotDetail = {
+  time: string;
+  endTime: string;
+  status: "AVAILABLE" | "BOOKED" | "MAINTENANCE" | "PAST";
+  available: boolean;
+  reason?: string;
+  allowedDurations: number[];
+};
+
+const FALLBACK_VENUES: Record<string, Venue> = {
   "1": {
-    id: 1,
+    id: 4,
     name: "Smash Arena",
-    location: "Hanoi",
+    location: "Thanh Xuan, Hanoi",
+    address: "125 Nguyen Trai, Thanh Xuan, Hanoi",
     rating: 4.9,
     reviewCount: 128,
     description:
-      "Premium badminton venue with professional courts, clean facilities, and a comfortable player-first environment.",
-    imageUrl:
-      "/court_image/c1.jpeg",
+      "Premium badminton venue with professional courts, clean facilities, LED lighting, and a comfortable player-first environment.",
+    imageUrl: "/court_image/c1.jpeg",
+    openTime: "06:00",
+    closeTime: "23:00",
     courts: [
-      { id: 1, name: "Court 01", priceHour: 100000 },
-      { id: 2, name: "Court 02", priceHour: 100000 },
-      { id: 3, name: "Court 03", priceHour: 120000 },
-      { id: 4, name: "Court 04", priceHour: 120000 },
+      { id: 11, name: "Court 01", priceHour: 100000, image: "/court_image/c1.jpeg", surface: "Taraflex Pro Turf" },
+      { id: 12, name: "Court 02", priceHour: 100000, image: "/court_image/c2.jpeg", surface: "Tournament Blue Mat" },
+      { id: 13, name: "Court 03", priceHour: 120000, image: "/court_image/c3.jpeg", surface: "Center Court Stadium" },
+      { id: 14, name: "Court 04", priceHour: 120000, image: "/court_image/c4.jpg", surface: "Training Arena" },
     ],
   },
-
   "2": {
-    id: 2,
-    name: "Victory Club",
-    location: "Hanoi",
+    id: 5,
+    name: "Victory Badminton Club",
+    location: "Cau Giay, Hanoi",
+    address: "88 Xuan Thuy, Cau Giay, Hanoi",
     rating: 4.8,
     reviewCount: 96,
     description:
       "Spacious badminton club designed for casual games, training sessions, and competitive players.",
-    imageUrl:
-      "/court_image/c2.jpeg",
+    imageUrl: "/court_image/c2.jpeg",
+    openTime: "06:30",
+    closeTime: "22:30",
     courts: [
-      { id: 5, name: "Court 01", priceHour: 110000 },
-      { id: 6, name: "Court 02", priceHour: 110000 },
-      { id: 7, name: "Court 03", priceHour: 130000 },
+      { id: 15, name: "Court 01", priceHour: 110000, image: "/court_image/c2.jpeg", surface: "Taraflex Mat" },
+      { id: 16, name: "Court 02", priceHour: 110000, image: "/court_image/c5.webp", surface: "Pro Wooden Floor" },
+      { id: 17, name: "Court 03", priceHour: 130000, image: "/court_image/c6.webp", surface: "Tournament Arena" },
     ],
   },
-
   "3": {
-    id: 3,
+    id: 6,
     name: "Pro Court",
-    location: "Hanoi",
+    location: "Dong Da, Hanoi",
+    address: "45 Chua Boc, Dong Da, Hanoi",
     rating: 4.7,
     reviewCount: 74,
     description:
       "Professional-grade badminton facility with high-quality flooring and tournament-ready courts.",
-    imageUrl:
-      "/court_image/c3.jpeg",
+    imageUrl: "/court_image/c3.jpeg",
+    openTime: "06:00",
+    closeTime: "23:00",
     courts: [
-      { id: 8, name: "Court 01", priceHour: 130000 },
-      { id: 9, name: "Court 02", priceHour: 130000 },
-      { id: 10, name: "Court 03", priceHour: 150000 },
+      { id: 18, name: "Court 01", priceHour: 130000, image: "/court_image/c3.jpeg", surface: "Tournament Green" },
+      { id: 19, name: "Court 02", priceHour: 130000, image: "/court_image/c1.jpeg", surface: "Taraflex Pro" },
+      { id: 20, name: "Court 03", priceHour: 150000, image: "/court_image/c4.jpg", surface: "Olympic Standard" },
     ],
   },
 };
-
-const timeSlots = [
-  "07:00",
-  "08:00",
-  "09:00",
-  "10:00",
-  "11:00",
-  "13:00",
-  "14:00",
-  "15:00",
-  "16:00",
-  "17:00",
-  "18:00",
-  "19:00",
-  "20:00",
-  "21:00",
-];
 
 function formatPrice(value: number) {
   return `${value.toLocaleString("en-US")}₫`;
@@ -126,7 +136,6 @@ function getDateString(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-
   return `${year}-${month}-${day}`;
 }
 
@@ -138,82 +147,238 @@ function formatDate(date: Date) {
   });
 }
 
-// Compute all booked hour slots for a court on a given date
-function getBookedHoursForCourt(
-  venueId: number,
-  courtName: string,
-  date: string,
-  bookings: Booking[]
-): Set<string> {
-  const booked = new Set<string>();
-
-  // 1. Deterministic baseline booked slots based on court & date for realistic booking activity
-  const seed = `${venueId}-${courtName}-${date}`;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const absHash = Math.abs(hash);
-  const baselineIdx1 = (absHash % 4) + 1; // 08:00 to 11:00
-  const baselineIdx2 = (absHash % 4) + 9; // 17:00 to 20:00
-  if (timeSlots[baselineIdx1]) booked.add(timeSlots[baselineIdx1]);
-  if (timeSlots[baselineIdx2]) booked.add(timeSlots[baselineIdx2]);
-
-  // 2. Real user bookings from AppContext (persisted across sessions)
-  bookings.forEach((b) => {
-    if (
-      b.venueId === venueId &&
-      b.date === date &&
-      b.status !== "CANCELLED" &&
-      (b.courtName === courtName ||
-        b.courtName.includes(courtName) ||
-        courtName.includes(b.courtName))
-    ) {
-      const match = b.timeSlot.match(/(\d{2}):00/);
-      if (match) {
-        const startHour = parseInt(match[1], 10);
-        const dur = b.duration || 1;
-        for (let i = 0; i < dur; i++) {
-          const hStr = `${String(startHour + i).padStart(2, "0")}:00`;
-          booked.add(hStr);
-        }
-      }
-    }
-  });
-
-  return booked;
-}
-
 export default function CourtPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const dateFromQuery = searchParams?.get("date");
-  const { addBooking, bookings } = useApp();
+  const router = useRouter();
+  const { user, addBooking, refreshBookings, getVenueById } = useApp();
 
-  const venue = venues[String(params.id)] ?? venues["1"];
+  const rawVenueId = Array.isArray(params?.id) ? params.id[0] : params?.id;
 
-  const [selectedCourt, setSelectedCourt] = useState(venue.courts[0]);
-
-  const [selectedDate, setSelectedDate] = useState(() => {
-    if (dateFromQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateFromQuery)) {
-      return dateFromQuery;
+  // 1. Venue Data Loading from API or fallback
+  const [venue, setVenue] = useState<Venue>(() => {
+    const fallback = FALLBACK_VENUES[String(rawVenueId)] || FALLBACK_VENUES["1"];
+    const dynamic = getVenueById(String(rawVenueId));
+    if (dynamic) {
+      return {
+        id: dynamic.id,
+        name: dynamic.name,
+        location: dynamic.location,
+        address: dynamic.address || dynamic.location,
+        rating: dynamic.rating,
+        reviewCount: dynamic.reviews,
+        description: dynamic.description,
+        imageUrl: dynamic.image,
+        openTime: dynamic.openingHours?.split(" - ")[0] || "06:00",
+        closeTime: dynamic.openingHours?.split(" - ")[1] || "23:00",
+        courts: dynamic.courtsList && dynamic.courtsList.length > 0
+          ? dynamic.courtsList
+          : fallback.courts,
+      };
     }
-    return getDateString(new Date());
+    return fallback;
   });
 
-  const router = useRouter();
+  // Fetch full venue details from API
+  useEffect(() => {
+    let isMounted = true;
+    async function loadVenue() {
+      try {
+        const res = await fetch(`/api/venues/${rawVenueId}`);
+        const data = await res.json();
+        if (isMounted && data.success && data.venue) {
+          const v = data.venue;
+          setVenue({
+            id: v.id,
+            name: v.name,
+            location: v.location,
+            address: v.address || v.location,
+            rating: v.rating || 4.9,
+            reviewCount: v.reviewCount || 100,
+            description: v.description || "Premium badminton venue.",
+            imageUrl: v.imageUrl || "/court_image/c1.jpeg",
+            openTime: v.openTime || "06:00",
+            closeTime: v.closeTime || "23:00",
+            courts: v.courts?.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              priceHour: c.priceHour,
+              image: v.imageUrl || "/court_image/c1.jpeg",
+              surface: c.surface || "Taraflex Pro Turf",
+            })) || [],
+          });
+        }
+      } catch (e) {
+        console.warn("Failed to load venue from API, using cached venue:", e);
+      }
+    }
+    loadVenue();
+    return () => {
+      isMounted = false;
+    };
+  }, [rawVenueId]);
+
+  // Selected Court
+  const [selectedCourt, setSelectedCourt] = useState<Court>(venue.courts[0] || {
+    id: 11,
+    name: "Court 01",
+    priceHour: 100000,
+    surface: "Taraflex Pro Turf",
+  });
+
+  // Keep selected court in sync when venue courts load
+  useEffect(() => {
+    if (venue.courts && venue.courts.length > 0) {
+      const exists = venue.courts.find((c) => c.id === selectedCourt.id);
+      if (!exists) {
+        setSelectedCourt(venue.courts[0]);
+      }
+    }
+  }, [venue.courts]);
+
+  // Date selection (Disable past dates)
+  const todayStr = useMemo(() => getDateString(new Date()), []);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    if (dateFromQuery && /^\d{4}-\d{2}-\d{2}$/.test(dateFromQuery)) {
+      if (dateFromQuery >= todayStr) return dateFromQuery;
+    }
+    return todayStr;
+  });
+
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
+  // Time & Duration Selection
   const [selectedTime, setSelectedTime] = useState("18:00");
   const [duration, setDuration] = useState(1);
   const [scheduleView, setScheduleView] = useState<"slots" | "timetable">("slots");
+  const [slotPeriod, setSlotPeriod] = useState<"all" | "morning" | "afternoon" | "evening">("all");
 
+  // Customer Contact Info State
+  const [customerName, setCustomerName] = useState(user?.name || "Alex Nguyen");
+  const [customerEmail, setCustomerEmail] = useState(user?.email || "alex.nguyen@example.com");
+  const [customerPhone, setCustomerPhone] = useState(user?.phone || "0912 345 678");
+  const [bookingNotes, setBookingNotes] = useState("");
+
+  // Sync customer details when user changes
+  useEffect(() => {
+    if (user) {
+      if (user.name) setCustomerName(user.name);
+      if (user.email) setCustomerEmail(user.email);
+      if (user.phone) setCustomerPhone(user.phone);
+    }
+  }, [user]);
+
+  // Server-Backed Availability State
+  const [slots, setSlots] = useState<SlotDetail[]>([]);
+  const [isLoadingAvailability, setIsLoadingAvailability] = useState(true);
+  const [availabilityStats, setAvailabilityStats] = useState({
+    total: 0,
+    available: 0,
+    booked: 0,
+    maintenance: 0,
+  });
+
+  // Booking Flow States
   const [isBooking, setIsBooking] = useState(false);
-  const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [bookingSuccessData, setBookingSuccessData] = useState<any | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [serverCreatedBooking, setServerCreatedBooking] = useState<any | null>(null);
 
+  // Idempotency key per user interaction session
+  const idempotencyKeyRef = useRef<string>(`IDEM-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
+
+  // Fetch Database-Backed Availability
+  const fetchAvailability = useCallback(async () => {
+    if (!selectedCourt?.id || !selectedDate) return;
+    setIsLoadingAvailability(true);
+    try {
+      const res = await fetch(`/api/availability?courtId=${selectedCourt.id}&date=${selectedDate}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        setSlots(json.data.slots || []);
+        setAvailabilityStats({
+          total: json.data.totalSlots || 0,
+          available: json.data.availableSlotsCount || 0,
+          booked: json.data.bookedSlotsCount || 0,
+          maintenance: json.data.maintenanceSlotsCount || 0,
+        });
+
+        // Ensure currently selected time is valid; if not, pick first available slot
+        const currentSlot = json.data.slots.find((s: SlotDetail) => s.time === selectedTime);
+        if (!currentSlot || !currentSlot.available) {
+          const firstAvailable = json.data.slots.find((s: SlotDetail) => s.available);
+          if (firstAvailable) {
+            setSelectedTime(firstAvailable.time);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch availability:", err);
+    } finally {
+      setIsLoadingAvailability(false);
+    }
+  }, [selectedCourt?.id, selectedDate]);
+
+  useEffect(() => {
+    fetchAvailability();
+  }, [fetchAvailability]);
+
+  // Consecutive slot conflict calculation for selected start time + duration
+  const conflictDetails = useMemo(() => {
+    if (slots.length === 0) return { hasConflict: false, conflicts: [] };
+
+    const selectedIndex = slots.findIndex((s) => s.time === selectedTime);
+    if (selectedIndex === -1) {
+      return { hasConflict: true, conflicts: [`${selectedTime} is not an operating slot`] };
+    }
+
+    const conflicts: string[] = [];
+    for (let i = 0; i < duration; i++) {
+      const targetSlot = slots[selectedIndex + i];
+      if (!targetSlot) {
+        conflicts.push(`Slot +${i}h exceeds venue operating hours`);
+      } else if (!targetSlot.available) {
+        conflicts.push(`${targetSlot.time} (${targetSlot.reason || targetSlot.status})`);
+      }
+    }
+
+    return {
+      hasConflict: conflicts.length > 0,
+      conflicts,
+    };
+  }, [slots, selectedTime, duration]);
+
+  // Allowed durations for selected start time
+  const currentSlotDetail = useMemo(() => {
+    return slots.find((s) => s.time === selectedTime);
+  }, [slots, selectedTime]);
+
+  // Filter slots for period (Morning / Afternoon / Evening)
+  const displayedSlots = useMemo(() => {
+    if (slotPeriod === "morning") {
+      return slots.filter((s) => {
+        const h = parseInt(s.time.split(":")[0], 10);
+        return h >= 5 && h <= 11;
+      });
+    }
+    if (slotPeriod === "afternoon") {
+      return slots.filter((s) => {
+        const h = parseInt(s.time.split(":")[0], 10);
+        return h >= 12 && h <= 17;
+      });
+    }
+    if (slotPeriod === "evening") {
+      return slots.filter((s) => {
+        const h = parseInt(s.time.split(":")[0], 10);
+        return h >= 18 && h <= 23;
+      });
+    }
+    return slots;
+  }, [slots, slotPeriod]);
+
+  // 7-day quick date picker items
   const dates = useMemo(() => {
     const list = Array.from({ length: 7 }, (_, index) => {
       const date = new Date();
@@ -226,7 +391,6 @@ export default function CourtPage() {
       };
     });
 
-    // If selectedDate is from calendar and not in the first 7 days, add it
     const exists = list.some((d) => d.value === selectedDate);
     if (!exists && selectedDate) {
       const customDate = new Date(selectedDate + "T00:00:00");
@@ -239,335 +403,340 @@ export default function CourtPage() {
     return list;
   }, [selectedDate]);
 
-  // Set of booked hour strings for current selected court and selected date
-  const bookedSlots = useMemo(() => {
-    return getBookedHoursForCourt(
-      venue.id,
-      selectedCourt.name,
-      selectedDate,
-      bookings
-    );
-  }, [venue.id, selectedCourt.name, selectedDate, bookings]);
-
-  // Check if selected start time or duration overlaps with a booked slot
-  const conflictHours = useMemo(() => {
-    const startHour = parseInt(selectedTime.split(":")[0], 10);
-    const conflicts: string[] = [];
-    for (let i = 0; i < duration; i++) {
-      const hStr = `${String(startHour + i).padStart(2, "0")}:00`;
-      if (bookedSlots.has(hStr)) {
-        conflicts.push(hStr);
-      }
-    }
-    return conflicts;
-  }, [selectedTime, duration, bookedSlots]);
-
-  const hasBookingConflict = conflictHours.length > 0;
-
-  // Auto-switch to first available slot if currently selected time is booked
-  useEffect(() => {
-    if (bookedSlots.has(selectedTime)) {
-      const firstAvailable = timeSlots.find((t) => !bookedSlots.has(t));
-      if (firstAvailable) {
-        setSelectedTime(firstAvailable);
-      }
-    }
-  }, [bookedSlots, selectedTime]);
-
   const totalPrice = selectedCourt.priceHour * duration;
 
-  function handleReserve() {
-    if (isBooking) {
-      return;
-    }
+  // Step 8: Confirm Booking Server-side with Concurrency Protection
+  async function handleReserve() {
+    if (isBooking) return;
 
-    if (hasBookingConflict) {
+    if (conflictDetails.hasConflict) {
       setErrorMessage(
-        `Time slot conflict: ${conflictHours.join(", ")} is already booked. Please choose an available time.`
+        `Time conflict: ${conflictDetails.conflicts.join(", ")}. Please choose an available consecutive slot.`
       );
       return;
     }
 
+    if (!customerName.trim() || !customerEmail.trim()) {
+      setErrorMessage("Please enter customer name and email address below.");
+      if (typeof document !== "undefined") {
+        document.getElementById("customer-details-section")?.scrollIntoView({ behavior: "smooth" });
+      }
+      return;
+    }
+
+    setIsBooking(true);
     setErrorMessage("");
-    // Directly open the VietQR payment modal
-    setIsPaymentModalOpen(true);
+
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          courtId: selectedCourt.id,
+          bookingDate: selectedDate,
+          startTime: selectedTime,
+          duration,
+          userId: user?.id,
+          customerName,
+          customerEmail,
+          customerPhone,
+          notes: bookingNotes,
+          paymentMethod: "VIETQR",
+          idempotencyKey: idempotencyKeyRef.current,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        if (res.status === 409) {
+          setErrorMessage(
+            data.message || "This court slot was just reserved by another player. Please select another slot."
+          );
+          // Immediately refresh availability to show newly occupied slot
+          await fetchAvailability();
+        } else {
+          setErrorMessage(data.message || "Unable to confirm booking. Please review your details.");
+        }
+        setIsBooking(false);
+        return;
+      }
+
+      // Successful server-side reservation
+      const createdBooking = data.booking;
+      setServerCreatedBooking(createdBooking);
+      setIsBooking(false);
+
+      // Open VietQR payment modal to proceed with official payment
+      setIsPaymentModalOpen(true);
+    } catch (err: any) {
+      console.error("Booking error:", err);
+      setErrorMessage("Network error occurred. Please check your connection and retry.");
+      setIsBooking(false);
+    }
   }
 
+  // Step 9 & 10: Payment Success and Confirmation Pass
   function handlePaymentSuccess() {
-    addBooking({
-      venueId: venue.id,
-      venueName: venue.name,
-      venueImage: venue.imageUrl,
-      courtName: selectedCourt.name,
-      location: venue.location,
-      date: selectedDate,
-      timeSlot: `${selectedTime} (${duration}h)`,
-      duration,
-      totalPrice: (selectedCourt.priceHour * duration) / 10000, // Normalized display price
-    });
-
     setIsPaymentModalOpen(false);
-    router.push("/bookings");
+
+    if (serverCreatedBooking) {
+      // Synchronize into AppContext for instant reflection across My Bookings
+      addBooking({
+        venueId: venue.id,
+        venueName: venue.name,
+        venueImage: venue.imageUrl,
+        courtName: selectedCourt.name,
+        location: venue.address || venue.location,
+        date: selectedDate,
+        timeSlot: `${selectedTime} - ${serverCreatedBooking.endTime || ""}`,
+        duration,
+        totalPrice: selectedCourt.priceHour * duration,
+        customerName,
+        customerEmail,
+        customerPhone,
+      });
+
+      refreshBookings();
+
+      // Show confirmation pass
+      setBookingSuccessData(serverCreatedBooking);
+      // Generate new idempotency key for next booking
+      idempotencyKeyRef.current = `IDEM-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    }
   }
 
   return (
-    <main className="min-h-screen bg-[#F7F8F4] text-[#17201C]">
+    <main className="min-h-screen bg-[#F7F8F4] text-[#17201C] pb-36 lg:pb-12 w-full max-w-full overflow-x-hidden">
       <Navbar />
       <LoginModal />
 
       {/* Ambient background */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-40 top-20 h-96 w-96 rounded-full bg-[#A8E63D]/10 blur-3xl" />
-
         <div className="absolute -right-40 top-[40%] h-96 w-96 rounded-full bg-[#62D9C3]/10 blur-3xl" />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-7xl px-5 py-8 lg:px-8 lg:py-12">
+      <div className="relative z-10 mx-auto max-w-7xl px-3.5 sm:px-6 lg:px-8 py-4 sm:py-8 lg:py-12 w-full min-w-0">
+        {/* BREADCRUMB NAVIGATION */}
+        <div className="mb-3 flex items-center gap-2 text-xs text-[#7c877f]">
+          <Link href="/" className="hover:text-[#17201c] flex items-center gap-1">
+            <ArrowLeft className="h-3 w-3" /> All Venues
+          </Link>
+          <span>/</span>
+          <span className="font-semibold text-[#17201c] truncate">{venue.name}</span>
+        </div>
+
         {/* VENUE HEADER */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-8"
+          transition={{ duration: 0.4 }}
+          className="mb-5 sm:mb-8"
         >
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <span className="rounded-full bg-[#DFF7F0] px-3 py-1.5 text-xs font-bold text-[#276B5C]">
-              PREMIUM VENUE
+          <div className="mb-2.5 sm:mb-3 flex flex-wrap items-center gap-2 sm:gap-3">
+            <span className="rounded-full bg-[#DFF7F0] px-3 py-1 text-[11px] sm:text-xs font-bold text-[#276B5C]">
+              BWF CERTIFIED VENUE
             </span>
 
-            <span className="flex items-center gap-1 text-sm font-semibold">
-              <Star
-                size={15}
-                fill="currentColor"
-                className="text-[#F0B429]"
-              />
-
+            <span className="flex items-center gap-1 text-xs sm:text-sm font-semibold">
+              <Star size={14} fill="currentColor" className="text-[#F0B429]" />
               {venue.rating}
-
               <span className="font-normal text-[#68736C]">
                 ({venue.reviewCount} reviews)
               </span>
             </span>
+
+            <span className="rounded-full bg-[#F2FBE7] px-2.5 py-1 text-[11px] font-bold text-[#426a17] border border-[#a8e63d]/30">
+              Hours: {venue.openTime || "06:00"} - {venue.closeTime || "23:00"}
+            </span>
           </div>
 
-          <h1 className="text-4xl font-black tracking-[-0.04em] sm:text-5xl lg:text-6xl">
+          <h1 className="text-2xl sm:text-5xl lg:text-6xl font-black tracking-[-0.04em] text-[#17201C] break-words">
             {venue.name}
           </h1>
 
-          <div className="mt-4 flex items-center gap-2 text-[#68736C]">
-            <MapPin size={17} />
-
-            {venue.location}
+          <div className="mt-2 sm:mt-3 flex items-center gap-2 text-xs sm:text-sm text-[#68736C]">
+            <MapPin size={15} className="text-[#78a72b] shrink-0" />
+            <span className="truncate">{venue.address || venue.location}</span>
           </div>
         </motion.div>
 
-        {/* HERO IMAGE */}
+        {/* HERO IMAGE & COURT PHOTO SWITCHER */}
         <motion.div
-          initial={{
-            opacity: 0,
-            scale: 0.98,
-          }}
-          animate={{
-            opacity: 1,
-            scale: 1,
-          }}
-          transition={{
-            duration: 0.6,
-            delay: 0.1,
-          }}
-          className="relative mb-10 h-[300px] overflow-hidden rounded-[32px] bg-[#17201C] shadow-[0_25px_70px_rgba(23,32,28,0.12)] sm:h-[420px]"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5 }}
+          className="relative mb-6 sm:mb-10 h-[220px] sm:h-[420px] overflow-hidden rounded-[24px] sm:rounded-[32px] bg-[#17201C] shadow-[0_15px_50px_rgba(23,32,28,0.10)] w-full"
         >
           <img
-            src={venue.imageUrl}
-            alt={venue.name}
-            className="h-full w-full object-cover opacity-90"
+            key={selectedCourt.id}
+            src={selectedCourt.image || venue.imageUrl}
+            alt={selectedCourt.name}
+            className="h-full w-full object-cover opacity-90 transition-opacity duration-300"
           />
 
-          <div className="absolute inset-0 bg-gradient-to-t from-[#17201C]/75 via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#17201C]/85 via-black/20 to-black/30 pointer-events-none" />
 
-          <div className="absolute bottom-6 left-6 right-6 flex items-end justify-between text-white">
-            <div>
-              <p className="mb-2 text-sm font-semibold text-white/70">
-                PLAY YOUR WAY
-              </p>
+          {/* Top badges on hero image */}
+          <div className="absolute top-3 left-3 right-3 sm:top-5 sm:left-5 sm:right-5 flex items-center justify-between gap-2 z-10 flex-wrap">
+            <span className="rounded-full bg-white/20 backdrop-blur-md px-3 py-1 text-[11px] font-extrabold text-white border border-white/25 truncate max-w-[70%]">
+              {selectedCourt.name} · {selectedCourt.surface || "Taraflex Pro Mat"}
+            </span>
+            <span className="rounded-full bg-[#A8E63D] px-2.5 py-1 text-[11px] font-black text-[#17201C] shrink-0 shadow-sm">
+              {formatPrice(selectedCourt.priceHour)}/h
+            </span>
+          </div>
 
-              <h2 className="text-2xl font-black sm:text-3xl">
-                Pick your court. Pick your time.
-              </h2>
+          {/* Bottom Interactive Court Photo Chooser */}
+          <div className="absolute bottom-3 left-3 right-3 sm:bottom-5 sm:left-5 sm:right-5 flex items-end justify-between gap-2 z-10">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none py-1 max-w-full">
+              {venue.courts.map((court) => {
+                const isCurrent = selectedCourt.id === court.id;
+                return (
+                  <button
+                    key={court.id}
+                    onClick={() => {
+                      setSelectedCourt(court);
+                      setErrorMessage("");
+                    }}
+                    className={`group relative shrink-0 overflow-hidden rounded-xl border-2 transition-all active:scale-95 ${
+                      isCurrent
+                        ? "border-[#A8E63D] ring-2 ring-[#A8E63D]/50 scale-105 shadow-md"
+                        : "border-white/40 opacity-75 hover:opacity-100"
+                    } h-12 w-16 sm:h-16 sm:w-22`}
+                    title={`Choose ${court.name}`}
+                  >
+                    <img
+                      src={court.image || venue.imageUrl}
+                      alt={court.name}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                    <span className="absolute bottom-0.5 left-1 text-[9px] font-black text-white truncate max-w-[90%]">
+                      {court.name}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="hidden rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur-xl sm:block">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Users size={16} />
-                Player-first booking
-              </div>
+            <div className="hidden sm:flex rounded-2xl border border-white/20 bg-white/10 px-3 py-1.5 backdrop-blur-xl shrink-0 text-white text-xs font-bold">
+              Tap court to select
             </div>
           </div>
         </motion.div>
 
-        <div className="grid gap-8 lg:grid-cols-[1fr_390px]">
-          {/* LEFT CONTENT */}
-          <section className="space-y-8">
-            {/* ABOUT */}
-            <div className="rounded-[28px] border border-[#E3E8E1] bg-white p-6 sm:p-8">
-              <h2 className="text-xl font-black">
-                About this venue
-              </h2>
-
-              <p className="mt-3 max-w-3xl leading-7 text-[#68736C]">
+        <div className="grid gap-6 sm:gap-8 lg:grid-cols-[1fr_390px] w-full min-w-0">
+          {/* LEFT COLUMN: BOOKING FLOW STEPS */}
+          <section className="space-y-6 sm:space-y-8 min-w-0 w-full">
+            {/* ABOUT VENUE */}
+            <div className="rounded-[24px] sm:rounded-[28px] border border-[#E3E8E1] bg-white p-4 sm:p-7 min-w-0">
+              <h2 className="text-base sm:text-lg font-black text-[#17201c]">About this venue</h2>
+              <p className="mt-2 text-sm leading-relaxed text-[#68736C] break-words">
                 {venue.description}
               </p>
             </div>
 
-            {/* QUICK FILTERS: COURT & DATE */}
-            <div className="rounded-[28px] border border-[#E3E8E1] bg-white p-6 sm:p-7 shadow-sm">
-              <div className="flex flex-col gap-5">
-                {/* Court Filter */}
-                <div>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#8A948D]">
-                      Court
-                    </span>
-                    <span className="text-xs font-semibold text-[#487519] bg-[#F2FBE7] px-2.5 py-0.5 rounded-full">
-                      {formatPrice(selectedCourt.priceHour)} / hr
-                    </span>
+            {/* STEP 1: CHOOSE COURT */}
+            <div className="rounded-[24px] sm:rounded-[28px] border border-[#E3E8E1] bg-white p-3.5 sm:p-7 shadow-sm min-w-0 w-full">
+              <div className="flex flex-col gap-3 min-w-0">
+                <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                  <div>
+                    <h2 className="text-base sm:text-lg font-black text-[#17201c] flex items-center gap-2">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#17201c] text-[10px] font-black text-[#a8e63d]">1</span>
+                      Select Court
+                    </h2>
+                    <p className="text-[11px] text-[#6b776f] mt-0.5">Real-time availability depends on the specific court</p>
                   </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {venue.courts.map((court) => {
-                      const selected = selectedCourt.id === court.id;
-
-                      return (
-                        <button
-                          key={court.id}
-                          onClick={() => {
-                            setSelectedCourt(court);
-                            setErrorMessage("");
-                          }}
-                          className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold transition-all ${selected
-                              ? "border-[#17201C] bg-[#17201C] text-white shadow-sm"
-                              : "border-[#E3E8E1] bg-[#F7F8F4] text-[#68736C] hover:bg-white hover:text-[#17201C] hover:border-[#CCD5CA]"
-                            }`}
-                        >
-                          <span
-                            className={`h-2 w-2 rounded-full ${selected ? "bg-[#A8E63D]" : "bg-[#B0BCB2]"
-                              }`}
-                          />
-                          {court.name}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <span className="text-xs font-semibold text-[#487519] bg-[#F2FBE7] px-2.5 py-1 rounded-full border border-[#a8e63d]/30 shrink-0">
+                    {formatPrice(selectedCourt.priceHour)} / hr
+                  </span>
                 </div>
 
-                <div className="h-px bg-[#EDF1EA]" />
+                <div className="grid grid-cols-2 gap-2 sm:gap-2.5 sm:grid-cols-4 w-full min-w-0">
+                  {venue.courts.map((court) => {
+                    const selected = selectedCourt.id === court.id;
 
-                {/* Date Filter */}
-                <div>
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-[#8A948D]">
-                        Date
-                      </span>
-                      <span className="text-xs font-bold text-[#17201c] bg-[#f0fae1] px-2.5 py-0.5 rounded-full border border-[#a8e63d]/40">
-                        {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsCalendarOpen(true)}
-                      className="flex items-center gap-1.5 rounded-full border border-[#e1e7df] bg-white px-3 py-1 text-xs font-bold text-[#17201c] hover:border-[#a8e63d] hover:bg-[#f6fbe9] transition active:scale-95 shadow-sm"
-                    >
-                      <Calendar className="h-3.5 w-3.5 text-[#5b871c]" />
-                      <span>Open Calendar</span>
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {/* Direct Calendar Picker Button */}
-                    <button
-                      type="button"
-                      onClick={() => setIsCalendarOpen(true)}
-                      className="shrink-0 flex items-center gap-1.5 rounded-full border border-[#e3e8e1] bg-white px-3.5 py-2 text-xs font-black text-[#17201c] hover:border-[#a8e63d] hover:bg-[#f6fbe9] shadow-sm active:scale-95 transition"
-                      title="Select date from full calendar"
-                    >
-                      <Calendar className="h-3.5 w-3.5 text-[#5b871c]" />
-                      <span>Calendar ▾</span>
-                    </button>
-
-                    {dates.map((date, index) => {
-                      const selected = selectedDate === date.value;
-                      const [weekday, day] = date.label.split(",");
-
-                      return (
-                        <button
-                          key={date.value}
-                          onClick={() => {
-                            setSelectedDate(date.value);
-                            setErrorMessage("");
-                          }}
-                          className={`shrink-0 flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-bold transition-all ${selected
-                              ? "border-[#A8E63D] bg-[#A8E63D] text-[#17201C] shadow-sm font-black"
-                              : "border-[#E3E8E1] bg-[#F7F8F4] text-[#68736C] hover:bg-white hover:text-[#17201C] hover:border-[#CCD5CA]"
-                            }`}
-                        >
-                          {index === 0 && date.value === getDateString(new Date()) ? "Today" : weekday}
-                          <span
-                            className={`text-[11px] ${selected
-                                ? "text-[#2B4E0E] font-extrabold"
-                                : "text-[#8E9790] font-normal"
-                              }`}
-                          >
-                            · {day ? day.trim() : date.value}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                    return (
+                      <button
+                        key={court.id}
+                        onClick={() => {
+                          setSelectedCourt(court);
+                          setErrorMessage("");
+                        }}
+                        className={`group flex items-center gap-2 p-2 rounded-2xl border text-left transition-all active:scale-95 min-w-0 w-full ${
+                          selected
+                            ? "border-[#17201C] bg-[#17201C] text-white shadow-md ring-2 ring-[#a8e63d]/40"
+                            : "border-[#E3E8E1] bg-[#F7F8F4] text-[#17201C] hover:bg-white hover:border-[#CCD5CA]"
+                        }`}
+                      >
+                        <div className="relative h-11 w-11 sm:h-13 sm:w-13 shrink-0 overflow-hidden rounded-xl bg-black/10">
+                          <img
+                            src={court.image || venue.imageUrl}
+                            alt={court.name}
+                            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
+                          />
+                          {selected && (
+                            <div className="absolute inset-0 bg-[#a8e63d]/25 flex items-center justify-center">
+                              <span className="h-2 w-2 rounded-full bg-[#a8e63d]" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <span className="text-xs font-black truncate block">{court.name}</span>
+                          <p className={`text-[10px] truncate ${selected ? "text-[#a8e63d]" : "text-[#7a857e]"}`}>
+                            {court.surface || "Taraflex"}
+                          </p>
+                          <p className={`text-[10.5px] font-bold truncate ${selected ? "text-white" : "text-[#456e17]"}`}>
+                            {formatPrice(court.priceHour)}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            {/* TIME & TIMETABLE */}
-            <div className="rounded-[28px] border border-[#E3E8E1] bg-white p-6 sm:p-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-black">
-                      Schedule & Timetable
+            {/* STEP 2: SELECT DATE, DURATION & TIME SLOT */}
+            <div className="rounded-[24px] sm:rounded-[28px] border border-[#E3E8E1] bg-white p-3.5 sm:p-7 shadow-sm min-w-0 w-full">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between min-w-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#17201c] text-[10px] font-black text-[#a8e63d]">2</span>
+                    <h2 className="text-base sm:text-xl font-black text-[#17201c]">
+                      Date & Play Time
                     </h2>
-                    <span className="rounded-full bg-[#DFF7F0] px-2.5 py-1 text-[11px] font-bold text-[#276B5C]">
-                      {timeSlots.length - bookedSlots.size}/{timeSlots.length} Free
+                    <span className="rounded-full bg-[#DFF7F0] px-2.5 py-0.5 text-[11px] font-bold text-[#276B5C]">
+                      {availabilityStats.available} Available
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-[#68736C]">
-                    Booked hours are shown on the live timetable.
+                  <p className="mt-0.5 text-xs text-[#68736C]">
+                    Availability is dynamically verified with the database for {selectedCourt.name}.
                   </p>
                 </div>
 
-                {/* View switcher tabs */}
-                <div className="inline-flex rounded-xl border border-[#E3E8E1] bg-[#F7F8F4] p-1">
+                {/* View switcher */}
+                <div className="inline-flex rounded-xl border border-[#E3E8E1] bg-[#F7F8F4] p-1 self-start sm:self-auto shrink-0">
                   <button
                     onClick={() => setScheduleView("slots")}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${scheduleView === "slots"
+                    className={`flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 text-xs font-bold transition ${
+                      scheduleView === "slots"
                         ? "bg-white text-[#17201C] shadow-sm"
                         : "text-[#68736C] hover:text-[#17201C]"
-                      }`}
+                    }`}
                   >
                     <LayoutGrid size={13} />
                     Slot View
                   </button>
                   <button
                     onClick={() => setScheduleView("timetable")}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${scheduleView === "timetable"
+                    className={`flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 text-xs font-bold transition ${
+                      scheduleView === "timetable"
                         ? "bg-white text-[#17201C] shadow-sm"
                         : "text-[#68736C] hover:text-[#17201C]"
-                      }`}
+                    }`}
                   >
                     <Table size={13} />
                     All Courts Matrix
@@ -575,9 +744,121 @@ export default function CourtPage() {
                 </div>
               </div>
 
+              {/* DATE PICKER & DURATION BAR */}
+              <div className="mt-4 rounded-2xl border border-[#e1e7df] bg-[#f9faf7] p-3 sm:p-4 min-w-0 w-full overflow-hidden">
+                <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#eaf7d5] text-[#4f781a] shrink-0">
+                      <Calendar className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#79857d] block">
+                        Selected Date
+                      </span>
+                      <p className="text-xs sm:text-sm font-black text-[#17201c] leading-tight truncate">
+                        {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsCalendarOpen(true)}
+                    className="flex items-center gap-1 sm:gap-1.5 rounded-full border border-[#d2dcd0] bg-white px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-black text-[#17201c] hover:border-[#a8e63d] hover:bg-[#f2fbe7] shadow-xs active:scale-95 transition shrink-0"
+                  >
+                    <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-[#5b871c]" />
+                    <span>Choose Date ▾</span>
+                  </button>
+                </div>
+
+                {/* Quick Date Buttons (Disable past dates) */}
+                <div className="flex gap-1.5 overflow-x-auto scrollbar-none py-1 w-full max-w-full select-none">
+                  {dates.map((date) => {
+                    const selected = selectedDate === date.value;
+                    const dateObj = new Date(date.value + "T00:00:00");
+                    const isToday = date.value === todayStr;
+                    const weekdayStr = isToday
+                      ? "Today"
+                      : dateObj.toLocaleDateString("en-US", { weekday: "short" });
+                    const dayStr = dateObj.getDate();
+                    const monthStr = dateObj.toLocaleDateString("en-US", { month: "short" });
+
+                    return (
+                      <button
+                        key={date.value}
+                        onClick={() => {
+                          setSelectedDate(date.value);
+                          setErrorMessage("");
+                        }}
+                        className={`shrink-0 flex flex-col items-center justify-center min-w-[50px] sm:min-w-[62px] py-1.5 px-1.5 sm:px-2 rounded-xl border transition-all active:scale-95 ${
+                          selected
+                            ? "border-[#A8E63D] bg-[#A8E63D] text-[#17201C] shadow-sm font-black scale-[1.02]"
+                            : "border-[#E3E8E1] bg-white text-[#68736C] hover:text-[#17201C]"
+                        }`}
+                      >
+                        <span className={`text-[9px] uppercase font-bold ${selected ? "text-[#24450a]" : "text-[#8a948c]"}`}>
+                          {weekdayStr}
+                        </span>
+                        <span className="text-sm sm:text-base font-black leading-tight my-0.5">
+                          {dayStr}
+                        </span>
+                        <span className={`text-[9px] font-semibold ${selected ? "text-[#24450a]" : "text-[#8a948c]"}`}>
+                          {monthStr}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => setIsCalendarOpen(true)}
+                    className="shrink-0 flex flex-col items-center justify-center min-w-[50px] sm:min-w-[62px] py-1.5 px-1.5 sm:px-2 rounded-xl border border-dashed border-[#CCD5CA] bg-white text-[#17201c] hover:border-[#A8E63D] hover:bg-[#F2FBE7] shadow-xs active:scale-95 transition"
+                    title="Choose from full calendar"
+                  >
+                    <Calendar className="h-3.5 w-3.5 text-[#5b871c] mb-0.5" />
+                    <span className="text-[9.5px] font-black leading-tight">More</span>
+                    <span className="text-[8px] text-[#8a948c]">▾</span>
+                  </button>
+                </div>
+
+                {/* Duration Selector */}
+                <div className="mt-2.5 pt-2 border-t border-[#edf1ea] flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-[#68736C]">Duration:</span>
+                  <div className="flex items-center gap-1.5">
+                    {[1, 2, 3].map((h) => {
+                      const isAllowed = currentSlotDetail ? currentSlotDetail.allowedDurations.includes(h) : true;
+                      return (
+                        <button
+                          key={h}
+                          onClick={() => {
+                            setDuration(h);
+                            setErrorMessage("");
+                          }}
+                          className={`rounded-xl px-2.5 sm:px-3 py-1 text-xs font-black transition active:scale-95 ${
+                            duration === h
+                              ? "bg-[#17201C] text-[#A8E63D] shadow-xs"
+                              : !isAllowed
+                              ? "border border-dashed border-red-200 bg-red-50/50 text-red-500 hover:bg-red-50"
+                              : "border border-[#E3E8E1] bg-white text-[#556358] hover:bg-[#F7F8F4]"
+                          }`}
+                        >
+                          {h} {h === 1 ? "Hour" : "Hours"}
+                          {!isAllowed && <span className="ml-1 text-[9px] text-red-500 font-normal">!</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
               {/* Status Legend */}
-              <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[#F0F3EE] pt-3 text-xs">
-                <span className="font-semibold text-[#8B958E]">Status:</span>
+              <div className="mt-3 flex flex-wrap items-center gap-2.5 sm:gap-3 border-t border-[#F0F3EE] pt-2.5 text-[11px]">
+                <span className="font-semibold text-[#8B958E]">Slot Status:</span>
                 <span className="inline-flex items-center gap-1.5 text-[#547926]">
                   <span className="h-2 w-2 rounded-full bg-[#8DCF36]" />
                   Available
@@ -590,73 +871,106 @@ export default function CourtPage() {
                   <span className="h-2 w-2 rounded-full bg-[#B2BDB5]" />
                   Booked
                 </span>
+                <span className="inline-flex items-center gap-1.5 text-amber-700">
+                  <span className="h-2 w-2 rounded-full bg-amber-400" />
+                  Maintenance
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-gray-400">
+                  <span className="h-2 w-2 rounded-full bg-gray-300" />
+                  Past
+                </span>
               </div>
 
               {/* 1. SLOTS GRID VIEW */}
               {scheduleView === "slots" ? (
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                  {timeSlots.map((time) => {
-                    const isBooked = bookedSlots.has(time);
-                    const selected = selectedTime === time;
+                <div className="mt-4">
+                  {isLoadingAvailability ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-3">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#17201c]/20 border-t-[#78a72b]" />
+                      <p className="text-xs text-[#7d8780]">Checking database court availability...</p>
+                    </div>
+                  ) : displayedSlots.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-[#7d8780]">
+                      No operating time slots for this venue.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 sm:gap-2.5 sm:grid-cols-3 md:grid-cols-4 w-full min-w-0">
+                      {displayedSlots.map((slot) => {
+                        const isSelected = selectedTime === slot.time;
+                        const isAvailable = slot.available;
 
-                    return (
-                      <motion.button
-                        key={time}
-                        disabled={isBooked}
-                        whileTap={!isBooked ? { scale: 0.95 } : undefined}
-                        onClick={() => {
-                          if (!isBooked) {
-                            setSelectedTime(time);
-                            setErrorMessage("");
-                          }
-                        }}
-                        className={`group relative flex flex-col items-center justify-center rounded-2xl border p-3.5 transition-all duration-200 ${isBooked
-                            ? "border-[#E4E8E1] bg-[#F2F4EF] text-[#8E9790] cursor-not-allowed opacity-80"
-                            : selected
-                              ? "border-[#A8E63D] bg-[#A8E63D] text-[#17201C] shadow-[0_8px_25px_rgba(168,230,61,0.25)] font-black"
-                              : "border-[#E3E8E1] bg-white text-[#17201C] hover:-translate-y-0.5 hover:border-[#BFC9BD] hover:shadow-md font-bold"
-                          }`}
-                      >
-                        <span className={`text-sm ${isBooked ? "line-through text-[#848E87]" : ""}`}>
-                          {time}
-                        </span>
+                        return (
+                          <motion.button
+                            key={slot.time}
+                            disabled={!isAvailable}
+                            whileTap={isAvailable ? { scale: 0.96 } : undefined}
+                            onClick={() => {
+                              if (isAvailable) {
+                                setSelectedTime(slot.time);
+                                setErrorMessage("");
+                              }
+                            }}
+                            className={`group relative flex flex-col items-center justify-center rounded-xl sm:rounded-2xl border p-2.5 sm:p-3.5 transition-all duration-200 active:scale-95 min-w-0 w-full ${
+                              !isAvailable
+                                ? "border-[#E4E8E1] bg-[#F2F4EF] text-[#8E9790] cursor-not-allowed opacity-75"
+                                : isSelected
+                                ? "border-[#A8E63D] bg-[#A8E63D] text-[#17201C] shadow-[0_6px_20px_rgba(168,230,61,0.28)] font-black"
+                                : "border-[#E3E8E1] bg-white text-[#17201C] hover:-translate-y-0.5 hover:border-[#BFC9BD] hover:shadow-sm font-bold"
+                            }`}
+                          >
+                            <span className={`text-sm sm:text-base font-extrabold ${!isAvailable ? "line-through text-[#848E87]" : ""}`}>
+                              {slot.time}
+                            </span>
 
-                        {isBooked ? (
-                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-[#E1E6DE] px-2 py-0.5 text-[10px] font-bold text-[#636C65]">
-                            <Lock size={10} />
-                            Booked
-                          </span>
-                        ) : selected ? (
-                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-[#17201C] px-2 py-0.5 text-[10px] font-bold text-white">
-                            <Check size={10} />
-                            Selected
-                          </span>
-                        ) : (
-                          <span className="mt-1.5 text-[10px] font-semibold text-[#547926]">
-                            Available
-                          </span>
-                        )}
-                      </motion.button>
-                    );
-                  })}
+                            {slot.status === "BOOKED" ? (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[#E1E6DE] px-1.5 py-0.5 text-[9px] font-bold text-[#636C65]">
+                                <Lock size={9} />
+                                Booked
+                              </span>
+                            ) : slot.status === "MAINTENANCE" ? (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-800">
+                                <Wrench size={9} />
+                                Maintenance
+                              </span>
+                            ) : slot.status === "PAST" ? (
+                              <span className="mt-1 text-[9px] font-semibold text-gray-400">
+                                Past
+                              </span>
+                            ) : isSelected ? (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[#17201C] px-1.5 py-0.5 text-[9px] font-bold text-white">
+                                <Check size={9} />
+                                Selected
+                              </span>
+                            ) : (
+                              <span className="mt-1 inline-flex items-center gap-1 text-[9px] font-bold text-[#4e751f]">
+                                <span className="h-1.5 w-1.5 rounded-full bg-[#8dcf36]" />
+                                Available
+                              </span>
+                            )}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ) : (
-                /* 2. FULL COURTS TIMETABLE MATRIX */
-                <div className="mt-5 overflow-hidden rounded-2xl border border-[#E3E8E1] bg-white shadow-sm">
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-xs">
+                /* 2. ALL COURTS TIMETABLE MATRIX */
+                <div className="mt-5 overflow-hidden rounded-2xl border border-[#E3E8E1] bg-white shadow-sm w-full">
+                  <div className="overflow-x-auto w-full">
+                    <table className="w-full min-w-[460px] border-collapse text-left text-xs">
                       <thead>
                         <tr className="border-b border-[#E3E8E1] bg-[#F7F8F4]">
-                          <th className="sticky left-0 bg-[#F7F8F4] px-4 py-3 font-bold text-[#68736C]">
+                          <th className="sticky left-0 bg-[#F7F8F4] px-3 sm:px-4 py-3 font-bold text-[#68736C]">
                             Time
                           </th>
                           {venue.courts.map((c) => (
                             <th
                               key={c.id}
-                              className={`px-4 py-3 font-black ${selectedCourt.id === c.id
+                              className={`px-3 sm:px-4 py-3 font-black ${
+                                selectedCourt.id === c.id
                                   ? "text-[#437517] bg-[#F2FBE7]"
                                   : "text-[#17201C]"
-                                }`}
+                              }`}
                             >
                               {c.name}
                             </th>
@@ -664,44 +978,39 @@ export default function CourtPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#EDF1EA]">
-                        {timeSlots.map((time) => (
-                          <tr key={time} className="hover:bg-[#FAFAF7] transition">
-                            <td className="sticky left-0 bg-white px-4 py-2.5 font-bold text-[#68736C]">
-                              {time}
+                        {slots.map((slot) => (
+                          <tr key={slot.time} className="hover:bg-[#FAFAF7] transition">
+                            <td className="sticky left-0 bg-white px-3 sm:px-4 py-2.5 font-bold text-[#68736C]">
+                              {slot.time}
                             </td>
                             {venue.courts.map((c) => {
-                              const courtBookedSlots = getBookedHoursForCourt(
-                                venue.id,
-                                c.name,
-                                selectedDate,
-                                bookings
-                              );
-                              const isBooked = courtBookedSlots.has(time);
-                              const isCurrentSelection =
-                                selectedCourt.id === c.id && selectedTime === time;
+                              const isCurrentCourt = selectedCourt.id === c.id;
+                              const isCurrentSelection = isCurrentCourt && selectedTime === slot.time;
+                              const isSlotAvailable = isCurrentCourt ? slot.available : true;
 
                               return (
-                                <td key={c.id} className="px-3 py-2">
-                                  {isBooked ? (
-                                    <span className="inline-flex items-center gap-1 rounded-md border border-red-200/70 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600">
-                                      <Lock size={10} />
-                                      Booked
-                                    </span>
-                                  ) : isCurrentSelection ? (
-                                    <span className="inline-flex items-center gap-1 rounded-md bg-[#A8E63D] px-2.5 py-1 text-[11px] font-black text-[#17201C] shadow-sm">
+                                <td key={c.id} className="px-2.5 sm:px-3 py-2">
+                                  {isCurrentSelection ? (
+                                    <span className="inline-flex items-center gap-1 rounded-md bg-[#A8E63D] px-2 py-1 text-[10.5px] font-black text-[#17201C] shadow-sm">
                                       <Check size={10} />
                                       Selected
+                                    </span>
+                                  ) : isCurrentCourt && !slot.available ? (
+                                    <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-500">
+                                      {slot.status === "BOOKED" && <Lock size={9} />}
+                                      {slot.status === "MAINTENANCE" && <Wrench size={9} />}
+                                      {slot.status}
                                     </span>
                                   ) : (
                                     <button
                                       onClick={() => {
                                         setSelectedCourt(c);
-                                        setSelectedTime(time);
+                                        setSelectedTime(slot.time);
                                         setErrorMessage("");
                                       }}
-                                      className="inline-flex items-center gap-1 rounded-md border border-[#D5DDD3] bg-white px-2 py-1 text-[11px] font-semibold text-[#456B1E] transition hover:border-[#A8E63D] hover:bg-[#F2FBE7]"
+                                      className="inline-flex items-center gap-1 rounded-md border border-[#D5DDD3] bg-white px-2 py-1 text-[10.5px] font-semibold text-[#456B1E] transition hover:border-[#A8E63D] hover:bg-[#F2FBE7]"
                                     >
-                                      Available
+                                      Select
                                     </button>
                                   )}
                                 </td>
@@ -715,179 +1024,187 @@ export default function CourtPage() {
                 </div>
               )}
             </div>
-          </section>
 
-          {/* BOOKING SUMMARY */}
-          <aside className="lg:sticky lg:top-6 lg:self-start">
-            <motion.div
-              initial={{
-                opacity: 0,
-                x: 20,
-              }}
-              animate={{
-                opacity: 1,
-                x: 0,
-              }}
-              transition={{
-                duration: 0.5,
-                delay: 0.2,
-              }}
-              className="overflow-hidden rounded-[30px] border border-[#DDE5DB] bg-white shadow-[0_25px_70px_rgba(23,32,28,0.10)]"
-            >
-              <div className="bg-[#17201C] p-6 text-white">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[#A8E63D]">
-                  <Sparkles size={16} />
+            {/* STEP 3: CUSTOMER CONTACT DETAILS */}
+            <div id="customer-details-section" className="rounded-[24px] sm:rounded-[28px] border border-[#E3E8E1] bg-white p-3.5 sm:p-7 shadow-sm min-w-0 w-full scroll-mt-20">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#17201c] text-[10px] font-black text-[#a8e63d]">3</span>
+                <h2 className="text-base sm:text-lg font-black text-[#17201c]">Customer Contact Details</h2>
+              </div>
+              <p className="text-xs text-[#717c74] mb-4">
+                Booking reference pass and check-in QR code will be registered under this contact.
+              </p>
 
-                  YOUR BOOKING
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="text-[11px] font-bold text-[#5c665f] uppercase tracking-wider block mb-1">
+                    Player Name <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-[#8a958d]" />
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="e.g. Alex Nguyen"
+                      className="w-full rounded-xl border border-[#dce3da] bg-[#fafbf9] pl-9 pr-3 py-2 text-xs font-semibold text-[#17201c] focus:border-[#a8e63d] focus:bg-white focus:outline-hidden"
+                    />
+                  </div>
                 </div>
 
-                <h2 className="mt-2 text-2xl font-black">
+                <div>
+                  <label className="text-[11px] font-bold text-[#5c665f] uppercase tracking-wider block mb-1">
+                    Email Address <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={customerEmail}
+                    onChange={(e) => setCustomerEmail(e.target.value)}
+                    placeholder="player@example.com"
+                    className="w-full rounded-xl border border-[#dce3da] bg-[#fafbf9] px-3 py-2 text-xs font-semibold text-[#17201c] focus:border-[#a8e63d] focus:bg-white focus:outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-[#5c665f] uppercase tracking-wider block mb-1">
+                    Phone Number
+                  </label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-3 h-4 w-4 text-[#8a958d]" />
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="0912 345 678"
+                      className="w-full rounded-xl border border-[#dce3da] bg-[#fafbf9] pl-9 pr-3 py-2 text-xs font-semibold text-[#17201c] focus:border-[#a8e63d] focus:bg-white focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <label className="text-[11px] font-bold text-[#5c665f] uppercase tracking-wider block mb-1">
+                  Special Notes / Requests (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={bookingNotes}
+                  onChange={(e) => setBookingNotes(e.target.value)}
+                  placeholder="e.g. Rent 2 Victor racquets at counter, warmup at 17:50"
+                  className="w-full rounded-xl border border-[#dce3da] bg-[#fafbf9] px-3 py-2 text-xs font-semibold text-[#17201c] focus:border-[#a8e63d] focus:bg-white focus:outline-hidden"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* RIGHT ASIDE: PERSISTENT PRICE & BOOKING SUMMARY */}
+          <aside className="lg:sticky lg:top-20 lg:self-start min-w-0 w-full">
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+              className="overflow-hidden rounded-[24px] sm:rounded-[30px] border border-[#DDE5DB] bg-white shadow-[0_20px_60px_rgba(23,32,28,0.08)] w-full"
+            >
+              <div className="bg-[#17201C] p-5 sm:p-6 text-white">
+                <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-[#A8E63D]">
+                  <Sparkles size={16} />
+                  YOUR COURT RESERVATION
+                </div>
+                <h2 className="mt-1 text-xl sm:text-2xl font-black">
                   Ready to play?
                 </h2>
               </div>
 
-              <div className="space-y-6 p-6">
-                {/* Court */}
+              <div className="space-y-4 sm:space-y-5 p-4 sm:p-6 text-xs">
+                {/* Court info */}
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-[#68736C]">
-                    Court
-                  </p>
-
-                  <p className="mt-1 text-lg font-black">
-                    {selectedCourt.name}
-                  </p>
-                </div>
-
-                {/* Date / time */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-2xl bg-[#F7F8F4] p-4">
-                    <p className="text-xs font-semibold text-[#68736C]">
-                      Date
-                    </p>
-
-                    <p className="mt-1 text-sm font-black">
-                      {selectedDate}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-[#F7F8F4] p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold text-[#68736C]">
-                        Start
-                      </p>
-                      {bookedSlots.has(selectedTime) ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700">
-                          <Lock size={9} /> Booked
-                        </span>
-                      ) : (
-                        <span className="rounded bg-[#DFF7F0] px-1.5 py-0.5 text-[9px] font-bold text-[#276B5C]">
-                          Available
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-1 text-sm font-black">
-                      {selectedTime}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Duration */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-black">
-                      Duration
-                    </p>
-
-                    <span className="text-sm font-bold text-[#68736C]">
-                      {duration} hour
-                      {duration > 1 ? "s" : ""}
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#79857d]">Court & Surface</span>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <p className="text-base font-black text-[#17201c]">{selectedCourt.name}</p>
+                    <span className="text-[11px] font-semibold text-[#547e1f] bg-[#f0fae1] px-2 py-0.5 rounded-md">
+                      {selectedCourt.surface || "Taraflex Pro Turf"}
                     </span>
                   </div>
+                </div>
 
-                  <div className="mt-3 flex items-center justify-between rounded-2xl border border-[#E3E8E1] p-2">
+                {/* Date / Time summary */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="rounded-2xl bg-[#F7F8F4] p-3">
+                    <span className="text-[10px] font-bold text-[#7d8780] block">Date</span>
+                    <p className="mt-0.5 font-black text-[#17201c] truncate">{selectedDate}</p>
+                  </div>
+                  <div className="rounded-2xl bg-[#F7F8F4] p-3">
+                    <span className="text-[10px] font-bold text-[#7d8780] block">Time Slot</span>
+                    <p className="mt-0.5 font-black text-[#17201c]">
+                      {selectedTime} ({duration}h)
+                    </p>
+                  </div>
+                </div>
+
+                {/* Duration controls */}
+                <div className="flex items-center justify-between rounded-2xl border border-[#E3E8E1] p-2">
+                  <div className="pl-1">
+                    <span className="text-[10px] text-[#7d8780] block">Duration</span>
+                    <span className="font-black text-[#17201c] text-sm">{duration} {duration === 1 ? "Hour" : "Hours"}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
                     <button
                       disabled={duration <= 1}
-                      onClick={() =>
-                        setDuration((value) =>
-                          Math.max(1, value - 1)
-                        )
-                      }
-                      className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-[#EEF1EC] disabled:opacity-30"
+                      onClick={() => setDuration((v) => Math.max(1, v - 1))}
+                      className="h-8 w-8 rounded-lg border border-[#e1e7df] bg-white flex items-center justify-center hover:bg-[#f2f5f0] disabled:opacity-30 active:scale-95"
                     >
-                      <Minus size={17} />
+                      <Minus size={13} />
                     </button>
-
-                    <span className="font-black">
-                      {duration}h
-                    </span>
-
                     <button
                       disabled={duration >= 3}
-                      onClick={() =>
-                        setDuration((value) =>
-                          Math.min(3, value + 1)
-                        )
-                      }
-                      className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-[#EEF1EC] disabled:opacity-30"
+                      onClick={() => setDuration((v) => Math.min(3, v + 1))}
+                      className="h-8 w-8 rounded-lg border border-[#e1e7df] bg-white flex items-center justify-center hover:bg-[#f2f5f0] disabled:opacity-30 active:scale-95"
                     >
-                      <Plus size={17} />
+                      <Plus size={13} />
                     </button>
                   </div>
                 </div>
 
-                {/* Time conflict warning */}
-                {hasBookingConflict && (
-                  <div className="flex items-start gap-2.5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-semibold leading-relaxed text-red-700">
-                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-600" />
-                    <div>
-                      <span>
-                        This court is already booked at <strong>{conflictHours.join(", ")}</strong>. Please choose another time.
-                      </span>
+                {/* Conflict warning */}
+                {conflictDetails.hasConflict && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-red-700 leading-relaxed font-semibold">
+                    <div className="flex items-center gap-1.5 font-black mb-1">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>Slot Conflict Detected</span>
                     </div>
+                    <p className="text-[11px]">{conflictDetails.conflicts.join(", ")}</p>
                   </div>
                 )}
 
-                <div className="h-px bg-[#E3E8E1]" />
-
-                {/* Total */}
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-sm text-[#68736C]">
-                      Total
-                    </p>
-
-                    <p className="mt-1 text-3xl font-black tracking-tight">
-                      {formatPrice(totalPrice)}
-                    </p>
+                {/* Live Price Breakdown */}
+                <div className="border-t border-[#E3E8E1] pt-3 space-y-1.5">
+                  <div className="flex justify-between text-[#68736C]">
+                    <span>Rate per hour</span>
+                    <span>{formatPrice(selectedCourt.priceHour)}</span>
                   </div>
-
-                  <p className="pb-1 text-xs font-semibold text-[#68736C]">
-                    {formatPrice(selectedCourt.priceHour)} ×{" "}
-                    {duration}
-                  </p>
+                  <div className="flex justify-between text-[#68736C]">
+                    <span>Duration</span>
+                    <span>{duration} hour{duration > 1 ? "s" : ""}</span>
+                  </div>
+                  <div className="flex justify-between text-[#68736C]">
+                    <span>Facility fee / taxes</span>
+                    <span className="text-[#3a6814] font-semibold">Included</span>
+                  </div>
+                  <div className="flex justify-between items-baseline pt-2 border-t border-[#edf1ea]">
+                    <span className="text-sm font-black text-[#17201c]">Final Total</span>
+                    <span className="text-2xl font-black text-[#17201c]">{formatPrice(totalPrice)}</span>
+                  </div>
                 </div>
 
-                {/* Error */}
+                {/* Error Banner */}
                 <AnimatePresence>
                   {errorMessage && (
                     <motion.div
-                      initial={{
-                        opacity: 0,
-                        height: 0,
-                        y: -5,
-                      }}
-                      animate={{
-                        opacity: 1,
-                        height: "auto",
-                        y: 0,
-                      }}
-                      exit={{
-                        opacity: 0,
-                        height: 0,
-                        y: -5,
-                      }}
-                      className="overflow-hidden rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700"
                     >
                       {errorMessage}
                     </motion.div>
@@ -895,54 +1212,39 @@ export default function CourtPage() {
                 </AnimatePresence>
 
                 {/* RESERVE BUTTON */}
-                <motion.button
-                  whileHover={{
-                    scale: isBooking || hasBookingConflict ? 1 : 1.01,
-                  }}
-                  whileTap={{
-                    scale: isBooking || hasBookingConflict ? 1 : 0.97,
-                  }}
-                  disabled={isBooking || hasBookingConflict}
+                <button
+                  disabled={isBooking || conflictDetails.hasConflict}
                   onClick={handleReserve}
-                  className={`flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 font-black transition ${hasBookingConflict
-                      ? "border border-red-200 bg-red-100 text-red-700 cursor-not-allowed shadow-none"
-                      : "bg-[#A8E63D] text-[#17201C] shadow-[0_12px_30px_rgba(168,230,61,0.25)] hover:bg-[#B7EF50] disabled:cursor-not-allowed disabled:opacity-70"
-                    }`}
+                  className={`w-full flex items-center justify-center gap-2 rounded-2xl py-3.5 font-black text-sm transition shadow-md active:scale-95 ${
+                    conflictDetails.hasConflict
+                      ? "bg-red-100 text-red-700 cursor-not-allowed"
+                      : "bg-[#A8E63D] text-[#17201C] hover:bg-[#b5ef4f] disabled:opacity-60"
+                  }`}
                 >
                   {isBooking ? (
                     <>
-                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#17201C]/30 border-t-[#17201C]" />
-                      Confirming...
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#17201c]/30 border-t-[#17201c]" />
+                      <span>Revalidating & Reserving...</span>
                     </>
-                  ) : hasBookingConflict ? (
+                  ) : conflictDetails.hasConflict ? (
                     <>
-                      <Lock size={17} />
-                      Slot Already Booked
+                      <Lock size={15} />
+                      <span>Slot Unavailable</span>
                     </>
                   ) : (
                     <>
-                      Reserve court
-                      <ArrowLeft
-                        className="rotate-180"
-                        size={17}
-                      />
+                      <span>Reserve Court</span>
+                      <ArrowLeft className="rotate-180 h-4 w-4" />
                     </>
                   )}
-                </motion.button>
+                </button>
 
-                {/* Security message */}
-                <div className="flex items-start gap-3 rounded-2xl bg-[#F7F8F4] p-4">
-                  <ShieldCheck
-                    size={18}
-                    className="mt-0.5 shrink-0 text-[#4F9D39]"
-                  />
-
-                  <p className="text-xs leading-5 text-[#68736C]">
-                    Your booking is confirmed only after the
-                    server successfully creates it. If another
-                    player takes the slot first, BookMeBadminton will
-                    notify you immediately.
-                  </p>
+                {/* Cancellation policy guarantee */}
+                <div className="rounded-xl bg-[#F7F8F4] p-3 text-[10.5px] text-[#69746c] flex items-start gap-2">
+                  <ShieldCheck className="h-4 w-4 text-[#4f9d39] shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Cancellation Policy:</strong> Free cancellation up to 6 hours before match. Instantly releases availability for other players.
+                  </span>
                 </div>
               </div>
             </motion.div>
@@ -950,169 +1252,149 @@ export default function CourtPage() {
         </div>
       </div>
 
-      {/* MOBILE BOOKING BAR */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-[#DDE5DB] bg-white/90 p-4 backdrop-blur-xl lg:hidden">
-        <div className="mx-auto flex max-w-2xl items-center gap-4">
+      {/* MOBILE PERSISTENT FLOATING BAR */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#DDE5DB] bg-white/95 px-3 py-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl lg:hidden shadow-[0_-8px_30px_rgba(23,32,28,0.12)]">
+        {errorMessage && (
+          <div className="mx-auto max-w-md mb-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 p-2 text-xs font-semibold text-red-700 border border-red-200 animate-in fade-in slide-in-from-bottom-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+              <span className="truncate">{errorMessage}</span>
+            </div>
+            <button
+              onClick={() => setErrorMessage("")}
+              className="shrink-0 text-red-600 hover:text-red-800 p-0.5"
+              aria-label="Dismiss error"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        <div className="mx-auto flex max-w-md items-center justify-between gap-2.5">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold text-[#68736C]">
-              {selectedCourt.name} · {selectedTime}
-            </p>
-
-            <p className="text-xl font-black">
-              {formatPrice(totalPrice)}
-            </p>
+            <div className="flex items-center gap-1 text-[11px] font-bold text-[#68736C] truncate">
+              <span className="truncate">{selectedCourt.name}</span>
+              <span>·</span>
+              <span className="text-[#17201c] font-black">{selectedTime}</span>
+              <span>·</span>
+              <span>{duration}h</span>
+            </div>
+            <p className="text-lg font-black text-[#17201c]">{formatPrice(totalPrice)}</p>
           </div>
 
           <button
             onClick={handleReserve}
-            disabled={isBooking || hasBookingConflict}
-            className={`rounded-2xl px-6 py-3.5 font-black transition active:scale-95 disabled:opacity-60 ${hasBookingConflict
+            disabled={isBooking || conflictDetails.hasConflict}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-2.5 text-xs font-black transition active:scale-95 shadow-md ${
+              conflictDetails.hasConflict
                 ? "bg-red-100 text-red-700 cursor-not-allowed"
+                : isBooking
+                ? "bg-[#17201c] text-[#a8e63d] cursor-wait"
                 : "bg-[#A8E63D] text-[#17201C]"
-              }`}
+            }`}
           >
-            {isBooking ? "..." : hasBookingConflict ? "Booked" : "Reserve"}
+            {isBooking ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/20 border-t-[#a8e63d]" />
+                <span>Reserving...</span>
+              </>
+            ) : conflictDetails.hasConflict ? (
+              "Slot Booked"
+            ) : (
+              <>
+                <span>Reserve Court</span>
+                <ArrowLeft className="rotate-180 h-3.5 w-3.5" />
+              </>
+            )}
           </button>
         </div>
       </div>
 
-      {/* SUCCESS MODAL */}
+      {/* STEP 10: CONFIRMATION & QR CHECK-IN PASS MODAL */}
       <AnimatePresence>
-        {bookingSuccess && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-[#17201C]/50 p-5 backdrop-blur-md"
-          >
+        {bookingSuccessData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#17201c]/70 backdrop-blur-md">
             <motion.div
-              initial={{
-                opacity: 0,
-                y: 30,
-                scale: 0.94,
-              }}
-              animate={{
-                opacity: 1,
-                y: 0,
-                scale: 1,
-              }}
-              exit={{
-                opacity: 0,
-                y: 20,
-                scale: 0.96,
-              }}
-              transition={{
-                type: "spring",
-                stiffness: 300,
-                damping: 24,
-              }}
-              className="w-full max-w-md rounded-[32px] bg-white p-7 shadow-2xl"
+              initial={{ opacity: 0, scale: 0.94, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 20 }}
+              className="relative w-full max-w-md rounded-[32px] bg-white p-6 shadow-2xl text-center select-none"
             >
-              <div className="flex justify-end">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#A8E63D] shadow-lg mb-3">
+                <Check size={32} strokeWidth={3} className="text-[#17201c]" />
+              </div>
+
+              <span className="rounded-full bg-[#DFF7F0] px-3 py-1 text-[11px] font-black text-[#276B5C]">
+                BOOKING CONFIRMED & PAID
+              </span>
+
+              <h3 className="mt-2 text-2xl font-black text-[#17201c]">You're Ready to Play!</h3>
+              <p className="text-xs text-[#717c74]">
+                Your court reservation is locked in. Show this check-in match pass at venue front desk.
+              </p>
+
+              {/* QR Pass Card */}
+              <div className="my-4 rounded-2xl border-2 border-dashed border-[#d8e0d6] bg-[#f8faf7] p-4 text-center">
+                <div className="inline-block bg-white p-3 rounded-xl shadow-md border border-[#e1e7df]">
+                  <svg className="w-32 h-32 mx-auto" viewBox="0 0 100 100" fill="none">
+                    <rect x="5" y="5" width="30" height="30" fill="#17201c" rx="4" />
+                    <rect x="10" y="10" width="20" height="20" fill="white" rx="2" />
+                    <rect x="14" y="14" width="12" height="12" fill="#17201c" rx="1" />
+                    <rect x="65" y="5" width="30" height="30" fill="#17201c" rx="4" />
+                    <rect x="70" y="10" width="20" height="20" fill="white" rx="2" />
+                    <rect x="74" y="14" width="12" height="12" fill="#17201c" rx="1" />
+                    <rect x="5" y="65" width="30" height="30" fill="#17201c" rx="4" />
+                    <rect x="10" y="70" width="20" height="20" fill="white" rx="2" />
+                    <rect x="14" y="74" width="12" height="12" fill="#17201c" rx="1" />
+                    <rect x="42" y="12" width="16" height="16" fill="#a8e63d" rx="2" />
+                    <rect x="42" y="42" width="16" height="16" fill="#17201c" rx="2" />
+                    <rect x="65" y="45" width="12" height="12" fill="#a8e63d" />
+                    <rect x="75" y="65" width="15" height="12" fill="#17201c" />
+                    <rect x="45" y="75" width="12" height="12" fill="#a8e63d" />
+                  </svg>
+                </div>
+                <p className="mt-2 font-mono text-sm font-black text-[#17201c]">
+                  {bookingSuccessData.bookingCode || `BK-${bookingSuccessData.id}`}
+                </p>
+                <span className="text-[10px] text-[#7d8780]">Official Match Check-in Pass</span>
+              </div>
+
+              {/* Booking Summary details */}
+              <div className="space-y-1.5 text-xs text-left bg-[#f7f8f4] p-3.5 rounded-xl border border-[#e1e7df]">
+                <div className="flex justify-between">
+                  <span className="text-[#68736C]">Venue:</span>
+                  <span className="font-bold text-[#17201c]">{venue.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#68736C]">Court:</span>
+                  <span className="font-bold text-[#17201c]">{selectedCourt.name} ({selectedCourt.surface || "Taraflex"})</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#68736C]">Date & Time:</span>
+                  <span className="font-bold text-[#17201c]">{selectedDate} · {selectedTime} ({duration}h)</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#68736C]">Total Paid:</span>
+                  <span className="font-black text-[#3b6315]">{formatPrice(totalPrice)}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 flex gap-2">
                 <button
-                  onClick={() =>
-                    setBookingSuccess(false)
-                  }
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F7F8F4] transition hover:bg-[#EEF1EC]"
+                  onClick={() => window.print()}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-[#d2dcd0] bg-white py-2.5 text-xs font-bold text-[#17201c] hover:bg-[#f7f8f4]"
                 >
-                  <X size={17} />
+                  <Printer size={13} />
+                  Print Pass
                 </button>
+                <Link
+                  href="/bookings"
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[#17201c] py-2.5 text-xs font-bold text-white hover:bg-[#2c3a32]"
+                >
+                  View My Bookings
+                </Link>
               </div>
-
-              {/* Success icon */}
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{
-                  delay: 0.1,
-                  type: "spring",
-                  stiffness: 300,
-                }}
-                className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-[#A8E63D]"
-              >
-                <Check
-                  size={38}
-                  strokeWidth={3}
-                />
-              </motion.div>
-
-              <div className="mt-6 text-center">
-                <p className="text-sm font-bold text-[#4F9D39]">
-                  BOOKING CONFIRMED
-                </p>
-
-                <h2 className="mt-2 text-3xl font-black tracking-tight">
-                  You're ready to play.
-                </h2>
-
-                <p className="mt-3 leading-6 text-[#68736C]">
-                  Your court has been successfully reserved.
-                </p>
-              </div>
-
-              {/* Booking details */}
-              <div className="mt-6 space-y-3 rounded-2xl bg-[#F7F8F4] p-5">
-                <div className="flex justify-between">
-                  <span className="text-sm text-[#68736C]">
-                    Venue
-                  </span>
-
-                  <span className="text-sm font-black">
-                    {venue.name}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-sm text-[#68736C]">
-                    Court
-                  </span>
-
-                  <span className="text-sm font-black">
-                    {selectedCourt.name}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-sm text-[#68736C]">
-                    Date
-                  </span>
-
-                  <span className="text-sm font-black">
-                    {selectedDate}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-sm text-[#68736C]">
-                    Time
-                  </span>
-
-                  <span className="text-sm font-black">
-                    {selectedTime}
-                  </span>
-                </div>
-
-                <div className="h-px bg-[#E3E8E1]" />
-
-                <div className="flex justify-between">
-                  <span className="font-bold">
-                    Total
-                  </span>
-
-                  <span className="font-black">
-                    {formatPrice(totalPrice)}
-                  </span>
-                </div>
-              </div>
-
-              <Link
-                href="/bookings"
-                className="mt-5 flex w-full items-center justify-center rounded-2xl bg-[#17201C] px-5 py-4 font-black text-white transition hover:bg-[#27332D]"
-              >
-                View my bookings
-              </Link>
             </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1138,6 +1420,8 @@ export default function CourtPage() {
         date={selectedDate}
         timeSlot={`${selectedTime} (${duration}h)`}
         totalPrice={totalPrice}
+        bookingId={serverCreatedBooking?.id}
+        bookingCode={serverCreatedBooking?.bookingCode}
       />
     </main>
   );

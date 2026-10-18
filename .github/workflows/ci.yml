@@ -1,0 +1,88 @@
+name: CI/CD & Release Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Quality Assurance & Build Verification
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bookme_test
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: bookme_badminton_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://bookme_test:test_password@localhost:5432/bookme_badminton_test?schema=public
+      CRON_SECRET: test_ci_cron_secret_minimum_32_characters_long
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies (locked)
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply database migrations to test DB
+        run: npx prisma migrate deploy
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run automated test suite
+        run: npm test
+
+      - name: Build Next.js production bundle
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: 1
+
+  deploy:
+    name: Deploy to Production
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment Notification
+        run: |
+          echo "All QA verification, schema checks, tests, and builds succeeded!"
+          echo "Deploying to production target via configured secrets..."
+      # Deployment step can be wired to your hosting provider's deploy webhook or CLI:
+      # - name: Trigger Deployment Webhook
+      #   if: env.DEPLOY_WEBHOOK_URL != ''
+      #   run: curl -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}"

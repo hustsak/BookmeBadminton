@@ -7,6 +7,8 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "tsx tests/booking-flow.test.ts && tsx tests/matches-flow.test.ts && tsx tests/matchmaking-flow.test.ts && tsx tests/notifications-flow.test.ts && tsx tests/statistics-and-ratings.test.ts && tsx tests/owner-analytics.test.ts && tsx tests/admin-platform.test.ts && tsx tests/mobile-pwa-flow.test.ts && tsx tests/e2e-quality-assurance.test.ts && tsx tests/production-deployment.test.ts",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {

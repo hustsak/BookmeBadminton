@@ -54,7 +54,7 @@ export function MobileQuickFilters({
   };
 
   return (
-    <div className="md:hidden w-full overflow-x-auto scrollbar-none py-1 -mx-4 px-4 flex items-center gap-2">
+    <div className="md:hidden w-full overflow-x-auto scrollbar-none py-1 px-0.5 flex items-center gap-2">
       {/* Date Picker Button (Opens Calendar) */}
       <button
         onClick={onOpenCalendarModal}

@@ -1,216 +1,184 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedUser } from "@/lib/auth";
+import {
+  createBooking,
+  SlotConflictError,
+  ValidationError,
+  NotFoundError,
+  normalizeDateString,
+} from "@/lib/booking-engine";
+
+export async function GET(request: Request) {
+  try {
+    const authUser = await getAuthenticatedUser(request);
+    const { searchParams } = new URL(request.url);
+    const requestedUserId = searchParams.get("userId");
+    const courtId = searchParams.get("courtId");
+    const venueId = searchParams.get("venueId");
+    const status = searchParams.get("status");
+    const date = searchParams.get("date");
+
+    // Unauthenticated public requests cannot list customer bookings
+    if (!authUser) {
+      return NextResponse.json({
+        success: true,
+        bookings: [],
+        count: 0,
+      });
+    }
+
+    const whereClause: any = {};
+
+    // Role-based scoping: customers can ONLY see their own bookings
+    if (authUser.role === "ADMIN") {
+      if (requestedUserId) {
+        whereClause.userId = parseInt(requestedUserId, 10);
+      }
+      if (venueId) {
+        whereClause.court = { venueId: parseInt(venueId, 10) };
+      }
+    } else if (authUser.role === "OWNER") {
+      if (requestedUserId && parseInt(requestedUserId, 10) === authUser.id) {
+        whereClause.userId = authUser.id;
+      } else {
+        whereClause.court = { venue: { ownerId: authUser.id } };
+      }
+    } else {
+      // Regular customer is strictly scoped to their own account
+      whereClause.userId = authUser.id;
+    }
+
+    if (status && status !== "ALL") {
+      whereClause.status = status;
+    }
+
+    if (date) {
+      const normalizedDate = normalizeDateString(date);
+      const startOfDay = new Date(`${normalizedDate}T00:00:00.000Z`);
+      const endOfDay = new Date(`${normalizedDate}T23:59:59.999Z`);
+      whereClause.bookingDate = {
+        gte: startOfDay,
+        lte: endOfDay,
+      };
+    }
+
+    const bookings = await prisma.booking.findMany({
+      where: whereClause,
+      include: {
+        court: {
+          include: {
+            venue: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        payments: true,
+      },
+      orderBy: [
+        { bookingDate: "desc" },
+        { startTime: "desc" },
+      ],
+    });
+
+    return NextResponse.json({
+      success: true,
+      bookings,
+      count: bookings.length,
+    });
+  } catch (error: any) {
+    console.error("GET /api/bookings error:", error);
+    return NextResponse.json(
+      { success: false, message: "Failed to fetch bookings." },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
     const {
-      userId,
       courtId,
       bookingDate,
       startTime,
       duration,
+      userId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      paymentMethod,
+      notes,
+      idempotencyKey,
     } = body;
 
-    // --------------------------------------------------
-    // Validate required fields
-    // --------------------------------------------------
-
-    if (
-      userId === undefined ||
-      courtId === undefined ||
-      !bookingDate ||
-      !startTime ||
-      duration === undefined
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Missing required booking information.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Convert values
-    // --------------------------------------------------
-
-    const parsedUserId = Number(userId);
-    const parsedCourtId = Number(courtId);
-    const parsedDuration = Number(duration);
-
-    if (
-      !Number.isInteger(parsedUserId) ||
-      !Number.isInteger(parsedCourtId) ||
-      !Number.isInteger(parsedDuration)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid booking information.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Validate duration
-    // --------------------------------------------------
-
-    if (parsedDuration < 1 || parsedDuration > 3) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Duration must be between 1 and 3 hours.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Validate time format
-    // --------------------------------------------------
-
-    const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-    if (!timeRegex.test(startTime)) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid start time.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Validate booking date
-    // --------------------------------------------------
-
-    const date = new Date(bookingDate);
-
-    if (Number.isNaN(date.getTime())) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid booking date.",
-        },
-        { status: 400 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Find court
-    // --------------------------------------------------
-
-    const court = await prisma.court.findUnique({
-      where: {
-        id: parsedCourtId,
-      },
+    // Delegate to transactional booking engine with advisory lock
+    const { booking, isIdempotentReplay } = await createBooking({
+      courtId,
+      bookingDate,
+      startTime,
+      duration,
+      userId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      paymentMethod,
+      notes,
+      idempotencyKey,
     });
 
-    if (!court || !court.isActive) {
+    return NextResponse.json(
+      {
+        success: true,
+        message: isIdempotentReplay
+          ? "Booking already created (idempotent submission)."
+          : "Court booking confirmed successfully.",
+        booking,
+      },
+      { status: isIdempotentReplay ? 200 : 201 }
+    );
+  } catch (error: any) {
+    if (error instanceof SlotConflictError) {
       return NextResponse.json(
         {
           success: false,
-          message: "This court is unavailable.",
+          code: "SLOT_CONFLICT",
+          message: error.message,
+        },
+        { status: 409 }
+      );
+    }
+
+    if (error instanceof ValidationError) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "VALIDATION_ERROR",
+          message: error.message,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof NotFoundError) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "NOT_FOUND",
+          message: error.message,
         },
         { status: 404 }
       );
     }
 
-    // --------------------------------------------------
-    // Find user
-    // --------------------------------------------------
-
-    const user = await prisma.user.findUnique({
-      where: {
-        id: parsedUserId,
-      },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "User not found.",
-        },
-        { status: 404 }
-      );
-    }
-
-    // --------------------------------------------------
-    // Calculate total
-    // --------------------------------------------------
-
-    const totalPrice = court.priceHour * parsedDuration;
-
-    // --------------------------------------------------
-    // Create booking
-    //
-    // PostgreSQL unique constraint:
-    //
-    // courtId + bookingDate + startTime
-    //
-    // prevents two users from booking the same slot.
-    // --------------------------------------------------
-
-    try {
-      const booking = await prisma.booking.create({
-        data: {
-          userId: parsedUserId,
-          courtId: parsedCourtId,
-          bookingDate: date,
-          startTime,
-          duration: parsedDuration,
-          totalPrice,
-          status: "CONFIRMED",
-        },
-        include: {
-          court: {
-            include: {
-              venue: true,
-            },
-          },
-          user: true,
-        },
-      });
-
-      return NextResponse.json(
-        {
-          success: true,
-          message: "Booking confirmed.",
-          booking,
-        },
-        { status: 201 }
-      );
-    } catch (error) {
-      // ------------------------------------------------
-      // Duplicate booking
-      // ------------------------------------------------
-
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            message:
-              "This court was just booked by another player. Please choose another time.",
-          },
-          { status: 409 }
-        );
-      }
-
-      throw error;
-    }
-  } catch (error) {
-    console.error("Booking API error:", error);
-
+    console.error("POST /api/bookings error:", error);
     return NextResponse.json(
       {
         success: false,

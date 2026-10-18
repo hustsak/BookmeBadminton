@@ -14,83 +14,13 @@ import {
   Sparkles,
 } from "lucide-react";
 
-// List of available courts/venues across app
-const ALL_VENUES = [
-  {
-    id: 1,
-    name: "Smash Arena",
-    location: "Thanh Xuan, Hanoi",
-    rating: 4.9,
-    reviews: 128,
-    price: 6,
-    courts: 8,
-    image: "/court_image/c1.jpeg",
-    tags: ["Premium", "Air-conditioned"],
-  },
-  {
-    id: 2,
-    name: "Victory Badminton Club",
-    location: "Cau Giay, Hanoi",
-    rating: 4.8,
-    reviews: 96,
-    price: 5,
-    courts: 6,
-    image: "/court_image/c2.jpeg",
-    tags: ["Popular", "Parking"],
-  },
-  {
-    id: 3,
-    name: "Pro Court",
-    location: "Dong Da, Hanoi",
-    rating: 4.7,
-    reviews: 84,
-    price: 7,
-    courts: 10,
-    image: "/court_image/c3.jpeg",
-    tags: ["Professional", "Premium"],
-  },
-  {
-    id: 4,
-    name: "Green Shuttle",
-    location: "Thanh Xuan, Hanoi",
-    rating: 4.6,
-    reviews: 72,
-    price: 4,
-    courts: 5,
-    image: "/court_image/c4.jpg",
-    tags: ["Affordable", "Parking"],
-  },
-  {
-    id: 5,
-    name: "Ace Sports Center",
-    location: "Cau Giay, Hanoi",
-    rating: 4.9,
-    reviews: 156,
-    price: 8,
-    courts: 12,
-    image: "/court_image/c5.webp",
-    tags: ["Premium", "Professional"],
-  },
-  {
-    id: 6,
-    name: "Shuttle House",
-    location: "Dong Da, Hanoi",
-    rating: 4.5,
-    reviews: 54,
-    price: 5,
-    courts: 4,
-    image: "/court_image/c6.webp",
-    tags: ["Affordable", "Parking"],
-  },
-];
-
 export default function FavoritesPage() {
-  const { favorites, toggleFavorite } = useApp();
+  const { favorites, toggleFavorite, venues } = useApp();
 
-  const favoritedVenues = ALL_VENUES.filter((venue) => favorites.includes(venue.id));
+  const favoritedVenues = venues.filter((venue) => favorites.includes(venue.id));
 
   return (
-    <main className="min-h-screen bg-[#f7f8f4] text-[#17201c] pb-20">
+    <main className="min-h-screen bg-[#f7f8f4] text-[#17201c] pb-20 w-full max-w-full overflow-x-hidden">
       <Navbar />
       <LoginModal />
 

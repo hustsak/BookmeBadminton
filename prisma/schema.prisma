@@ -11,22 +11,67 @@ model User {
   id        Int      @id @default(autoincrement())
   name      String
   email     String   @unique
+  role      UserRole @default(CUSTOMER)
+  phone     String?
   createdAt DateTime @default(now())
 
-  bookings Booking[]
+  status                 UserStatus              @default(ACTIVE)
+  suspendedAt            DateTime?
+  suspensionReason       String?
+
+  bookings               Booking[]
+  ownedVenues            Venue[]                 @relation("VenueOwner")
+  createdMatches         Match[]                 @relation("MatchCreator")
+  matchParticipants      MatchParticipant[]
+  profile                PlayerProfile?
+  notifications          Notification[]          @relation("UserNotifications")
+  notificationPreference NotificationPreference?
+  sentInvitations        MatchInvitation[]       @relation("SentInvitations")
+  receivedInvitations    MatchInvitation[]       @relation("ReceivedInvitations")
+  submittedMatchResults  MatchResult[]           @relation("ResultSubmitter")
+  confirmedMatchResults  MatchResult[]           @relation("ResultConfirmer")
+  disputedMatchResults   MatchResult[]           @relation("ResultDisputer")
+  writtenReviews         PlayerReview[]          @relation("ReviewAuthor")
+  receivedReviews        PlayerReview[]          @relation("ReviewRecipient")
+  reportedReviews        ReviewReport[]          @relation("ReviewReporter")
+  auditLogs              AuditLog[]              @relation("AdminAuditLogs")
+  resolvedReports        ReviewReport[]          @relation("ReportResolver")
+  updatedConfigs         PlatformConfig[]        @relation("ConfigUpdater")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  CUSTOMER
+  OWNER
+  ADMIN
 }
 
 model Venue {
   id          Int      @id @default(autoincrement())
   name        String
   location    String
+  address     String?
   description String?
   rating      Float    @default(0)
   reviewCount Int      @default(0)
   imageUrl    String?
+  openTime    String   @default("06:00")
+  closeTime   String   @default("23:00")
+  currency    String   @default("VND")
+  isActive    Boolean  @default(true)
+  ownerId     Int?
+  owner       User?    @relation("VenueOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
 
-  courts Court[]
+  courts           Court[]
+  matches          Match[]
+  homeVenuePlayers PlayerProfile[] @relation("HomeVenue")
+
+  @@index([ownerId])
 }
 
 model Court {
@@ -34,41 +79,410 @@ model Court {
   name      String
   venueId   Int
   priceHour Int
+  surface   String?  @default("Taraflex Pro Turf")
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  venue    Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  bookings Booking[]
+  venue             Venue              @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  bookings          Booking[]
+  maintenanceBlocks MaintenanceBlock[]
+  matches           Match[]
 
   @@index([venueId])
 }
 
 model Booking {
-  id Int @id @default(autoincrement())
+  id             Int           @id @default(autoincrement())
+  bookingCode    String?       @unique
+  userId         Int
+  courtId        Int
+  bookingDate    DateTime
+  startTime      String
+  endTime        String?
+  duration       Int
+  pricePerHour   Int?
+  totalPrice     Int
+  status         BookingStatus @default(CONFIRMED)
+  paymentStatus  PaymentStatus @default(PENDING)
+  paymentMethod  String?       @default("VIETQR")
+  idempotencyKey String?       @unique
 
-  userId  Int
-  courtId Int
+  customerName       String?
+  customerEmail      String?
+  customerPhone      String?
+  notes              String?
+  cancellationReason String?
 
-  bookingDate DateTime
-  startTime   String
-  duration    Int
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-  totalPrice Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  court          Court         @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  payments       Payment[]
+  match          Match?
 
-  status BookingStatus @default(CONFIRMED)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
-
-  @@unique([courtId, bookingDate, startTime])
   @@index([bookingDate])
   @@index([courtId, bookingDate])
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+}
+
+model MaintenanceBlock {
+  id        Int      @id @default(autoincrement())
+  courtId   Int
+  date      DateTime
+  startTime String
+  endTime   String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@index([courtId, date])
+}
+
+model Payment {
+  id             Int           @id @default(autoincrement())
+  bookingId      Int
+  amount         Int
+  status         PaymentStatus @default(PENDING)
+  transactionRef String?
+  paymentMethod  String        @default("VIETQR")
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([paidAt])
 }
 
 enum BookingStatus {
   CONFIRMED
+  COMPLETED
   CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum MatchStatus {
+  OPEN
+  FULL
+  CANCELLED
+  COMPLETED
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  ALL_LEVELS
+}
+
+enum ParticipantRole {
+  HOST
+  PLAYER
+}
+
+enum ParticipantStatus {
+  JOINED
+  LEFT
+}
+
+model Match {
+  id                  Int                @id @default(autoincrement())
+  title               String
+  creatorId           Int
+  creator             User               @relation("MatchCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  venueId             Int
+  venue               Venue              @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  courtId             Int?
+  court               Court?             @relation(fields: [courtId], references: [id], onDelete: SetNull)
+  bookingId           Int?               @unique
+  booking             Booking?           @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  date                DateTime
+  startTime           String
+  endTime             String
+  skillLevel          SkillLevel         @default(ALL_LEVELS)
+  maxPlayers          Int                @default(4)
+  format              String?            @default("Doubles")
+  feePerPerson        Int?               @default(0)
+  shuttlecockProvided Boolean            @default(true)
+  description         String?
+  status              MatchStatus        @default(OPEN)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  completedAt         DateTime?
+
+  participants        MatchParticipant[]
+  invitations         MatchInvitation[]
+  result              MatchResult?
+  reviews             PlayerReview[]
+
+  @@index([venueId])
+  @@index([creatorId])
+  @@index([date])
+  @@index([status])
+  @@index([skillLevel])
+}
+
+model MatchParticipant {
+  id        Int               @id @default(autoincrement())
+  matchId   Int
+  userId    Int
+  role      ParticipantRole   @default(PLAYER)
+  status    ParticipantStatus @default(JOINED)
+  joinedAt  DateTime          @default(now())
+
+  match     Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([matchId])
+  @@index([userId])
+}
+
+enum PlayerSkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  PROFESSIONAL
+}
+
+enum PlayingStyle {
+  SINGLES
+  DOUBLES
+  BOTH
+}
+
+enum PlayHand {
+  LEFT
+  RIGHT
+  BOTH
+}
+
+model PlayerProfile {
+  id                 Int              @id @default(autoincrement())
+  userId             Int              @unique
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName        String
+  avatarUrl          String?
+  skillLevel         PlayerSkillLevel @default(INTERMEDIATE)
+  playingStyle       PlayingStyle     @default(BOTH)
+  playHand           PlayHand         @default(RIGHT)
+  preferredDays      String[]         @default([])
+  preferredTimeStart String?          @default("18:00")
+  preferredTimeEnd   String?          @default("21:00")
+  homeVenueId        Int?
+  homeVenue          Venue?           @relation("HomeVenue", fields: [homeVenueId], references: [id], onDelete: SetNull)
+  preferredVenueIds  Int[]            @default([])
+  bio                String?
+  yearsExperience    Int?             @default(1)
+  city               String?          @default("Hanoi")
+  district           String?
+  isProfileComplete  Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([skillLevel])
+  @@index([playingStyle])
+  @@index([homeVenueId])
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  PAYMENT_CONFIRMED
+  MATCH_INVITATION
+  MATCH_JOINED
+  MATCH_LEFT
+  MATCH_CANCELLED
+  MATCH_REMINDER
+  PLAYER_CONNECTION_REQUEST
+  PLAYER_CONNECTION_ACCEPTED
+  MATCH_RESULT_SUBMITTED
+  MATCH_RESULT_CONFIRMED
+  MATCH_RESULT_DISPUTED
+  PLAYER_RATED
+  SYSTEM
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+model Notification {
+  id             Int              @id @default(autoincrement())
+  userId         Int
+  user           User             @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  type           NotificationType
+  title          String
+  message        String
+  link           String?
+  isRead         Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  readAt         DateTime?
+  metadata       Json?
+  idempotencyKey String?          @unique
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+model NotificationPreference {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookingUpdates Boolean  @default(true)
+  matchUpdates   Boolean  @default(true)
+  reminders      Boolean  @default(true)
+  social         Boolean  @default(true)
+  emailChannel   Boolean  @default(false)
+  pushChannel    Boolean  @default(false)
+  smsChannel     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model MatchInvitation {
+  id          Int              @id @default(autoincrement())
+  matchId     Int
+  match       Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  senderId    Int
+  sender      User             @relation("SentInvitations", fields: [senderId], references: [id], onDelete: Cascade)
+  recipientId Int
+  recipient   User             @relation("ReceivedInvitations", fields: [recipientId], references: [id], onDelete: Cascade)
+  status      InvitationStatus @default(PENDING)
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([recipientId, status])
+  @@index([matchId])
+  @@index([senderId])
+}
+
+enum MatchResultStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  DISPUTED
+}
+
+enum ReviewModerationStatus {
+  ACTIVE
+  FLAGGED
+  REMOVED
+}
+
+model MatchResult {
+  id               Int               @id @default(autoincrement())
+  matchId          Int               @unique
+  match            Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  submittedById    Int
+  submittedBy      User              @relation("ResultSubmitter", fields: [submittedById], references: [id], onDelete: Cascade)
+  status           MatchResultStatus @default(PENDING_CONFIRMATION)
+  score            String
+  setScores        Json?
+  winnerTeam       Int?
+  team1PlayerIds   Int[]
+  team2PlayerIds   Int[]
+  winningPlayerIds Int[]
+  confirmedById    Int?
+  confirmedBy      User?             @relation("ResultConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull)
+  confirmedAt      DateTime?
+  disputedById     Int?
+  disputedBy       User?             @relation("ResultDisputer", fields: [disputedById], references: [id], onDelete: SetNull)
+  disputedAt       DateTime?
+  disputeReason    String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([matchId])
+  @@index([status])
+  @@index([submittedById])
+}
+
+model PlayerReview {
+  id               Int                    @id @default(autoincrement())
+  matchId          Int
+  match            Match                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  reviewerId       Int
+  reviewer         User                   @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
+  recipientId      Int
+  recipient        User                   @relation("ReviewRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  rating           Int
+  comment          String?
+  moderationStatus ReviewModerationStatus @default(ACTIVE)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  reports          ReviewReport[]
+
+  @@unique([reviewerId, recipientId, matchId])
+  @@index([recipientId, moderationStatus])
+  @@index([reviewerId])
+  @@index([matchId])
+}
+
+model ReviewReport {
+  id         Int          @id @default(autoincrement())
+  reviewId   Int
+  review     PlayerReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterId Int
+  reporter   User         @relation("ReviewReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reason          String
+  details         String?
+  status          String       @default("PENDING")
+  actionTaken     String?
+  resolutionNotes String?
+  resolvedAt      DateTime?
+  resolvedById    Int?
+  resolvedBy      User?        @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+
+  @@index([reviewId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  adminId      Int
+  admin        User     @relation("AdminAuditLogs", fields: [adminId], references: [id], onDelete: Cascade)
+  action       String
+  resourceType String
+  resourceId   String?
+  details      String?
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  @@index([adminId])
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+}
+
+model PlatformConfig {
+  id                     Int      @id @default(1)
+  platformName           String   @default("BookMeBadminton")
+  contactEmail           String   @default("support@bookmebadminton.com")
+  contactPhone           String   @default("+84 901 234 567")
+  defaultTimezone        String   @default("Asia/Ho_Chi_Minh")
+  defaultCurrency        String   @default("VND")
+  cancellationPolicy     String   @default("Free cancellation up to 6 hours before slot start time.")
+  minBookingDuration     Int      @default(1)
+  maxBookingDuration     Int      @default(4)
+  defaultMaxMatchPlayers Int      @default(4)
+  updatedAt              DateTime @updatedAt
+  updatedById            Int?
+  updatedBy              User?    @relation("ConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 }
