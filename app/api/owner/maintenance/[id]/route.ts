@@ -1,15 +1,36 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedOwner } from "@/lib/auth";
 
 export async function DELETE(
   request: Request,
   props: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { user, isForbidden } = await getAuthenticatedOwner(request);
+
+    if (isForbidden) {
+      return NextResponse.json(
+        { success: false, code: "FORBIDDEN", message: "Access denied. Owner or Admin privileges required." },
+        { status: 403 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, code: "UNAUTHORIZED", message: "Authentication required." },
+        { status: 401 }
+      );
+    }
+
     const { id } = await props.params;
     const blockId = parseInt(id, 10);
-    const { searchParams } = new URL(request.url);
-    const ownerId = searchParams.get("ownerId");
+    if (isNaN(blockId)) {
+      return NextResponse.json(
+        { success: false, message: "Invalid maintenance block ID." },
+        { status: 400 }
+      );
+    }
 
     const block = await prisma.maintenanceBlock.findUnique({
       where: { id: blockId },
@@ -25,8 +46,8 @@ export async function DELETE(
       );
     }
 
-    // Strict Venue Isolation
-    if (ownerId && block.court.venue.ownerId !== parseInt(ownerId, 10)) {
+    // Strict Ownership Check: Must own this court's venue or be Admin
+    if (user.role !== "ADMIN" && block.court.venue.ownerId !== user.id) {
       return NextResponse.json(
         {
           success: false,
@@ -53,3 +74,4 @@ export async function DELETE(
     );
   }
 }
+

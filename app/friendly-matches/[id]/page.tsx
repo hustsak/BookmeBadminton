@@ -33,6 +33,7 @@ import {
   Star,
   Flag,
   AlertTriangle,
+  UserX,
 } from "lucide-react";
 
 export default function MatchDetailPage(props: {
@@ -53,6 +54,12 @@ export default function MatchDetailPage(props: {
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
+
+  // Host Player Removal state
+  const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
+  const [playerToRemove, setPlayerToRemove] = useState<{ id: number; name: string } | null>(null);
+  const [removeReason, setRemoveReason] = useState("");
+  const [isRemovingPlayer, setIsRemovingPlayer] = useState(false);
 
   // Invite players state
   const [availablePlayers, setAvailablePlayers] = useState<any[]>([]);
@@ -139,6 +146,7 @@ export default function MatchDetailPage(props: {
         setIsEditModalOpen(false);
         setIsCancelModalOpen(false);
         setIsLeaveModalOpen(false);
+        setIsRemoveModalOpen(false);
         setIsInviteModalOpen(false);
         setIsResultModalOpen(false);
         setIsDisputeModalOpen(false);
@@ -209,6 +217,48 @@ export default function MatchDetailPage(props: {
       showToast("Network error. Please try again.");
     } finally {
       setIsActionLoading(false);
+    }
+  };
+
+  // Handle Host Removing a Player
+  const handleOpenRemoveModal = (userId: number, name: string) => {
+    setPlayerToRemove({ id: userId, name });
+    setRemoveReason("");
+    setIsRemoveModalOpen(true);
+  };
+
+  const handleConfirmRemovePlayer = async () => {
+    if (!playerToRemove || !user) return;
+    setIsRemovingPlayer(true);
+    try {
+      const numericId = parseInt(id.replace(/\D/g, ""), 10);
+      const res = await fetch(`/api/matches/${numericId}/remove-player`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": String(user.id),
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          targetUserId: playerToRemove.id,
+          reason: removeReason.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`${playerToRemove.name} has been removed from the match. Spot reopened.`);
+        setIsRemoveModalOpen(false);
+        setPlayerToRemove(null);
+        await loadMatch();
+        await refreshMatches();
+      } else {
+        showToast(data.message || "Failed to remove player.");
+      }
+    } catch (err) {
+      showToast("Network error. Please try again.");
+    } finally {
+      setIsRemovingPlayer(false);
     }
   };
 
@@ -1051,16 +1101,35 @@ export default function MatchDetailPage(props: {
                         </div>
                       </div>
 
-                      <div>
+                      <div className="flex items-center gap-2">
                         {isHost ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-[#d8e4d2] bg-[#f0fae1] px-2.5 py-1 text-[11px] font-bold text-[#456f17]">
                             <Award className="h-3 w-3" />
                             Host
                           </span>
                         ) : (
-                          <span className="rounded-full bg-[#eef1eb] px-2.5 py-1 text-[11px] font-semibold text-[#667268]">
-                            Player
-                          </span>
+                          <>
+                            <span className="rounded-full bg-[#eef1eb] px-2.5 py-1 text-[11px] font-semibold text-[#667268]">
+                              Player
+                            </span>
+
+                            {/* Host Player Removal Action Button */}
+                            {isCreator && !isCancelled && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOpenRemoveModal(p.userId, p.user?.name || `Player #${p.userId}`)
+                                }
+                                id={`remove-player-btn-${p.userId}`}
+                                data-testid={`remove-player-btn-${p.userId}`}
+                                title={`Remove ${p.user?.name || "player"} from match`}
+                                className="flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 text-[11px] font-bold transition shadow-2xs active:scale-95"
+                              >
+                                <UserX className="h-3.5 w-3.5" />
+                                <span>Remove</span>
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -1441,6 +1510,94 @@ export default function MatchDetailPage(props: {
                   className="flex-1 rounded-xl bg-red-600 py-2.5 text-xs font-extrabold text-white hover:bg-red-700 shadow"
                 >
                   {isActionLoading ? "Leaving..." : "Confirm Leave"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* HOST REMOVE PLAYER MODAL */}
+      <AnimatePresence>
+        {isRemoveModalOpen && playerToRemove && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!isRemovingPlayer) {
+                  setIsRemoveModalOpen(false);
+                  setPlayerToRemove(null);
+                }
+              }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md rounded-[28px] border border-[#e1e7df] bg-white p-6 shadow-2xl z-10"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-100 text-red-600 shrink-0">
+                  <UserX className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-[#17201c]">
+                    Remove Player from Match?
+                  </h3>
+                  <p className="text-xs text-[#7d8880]">
+                    Their spot will be reopened for other players immediately.
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#525e56] leading-relaxed mb-4">
+                Are you sure you want to remove <strong className="text-[#17201c]">{playerToRemove.name}</strong> from this match session? Their account, profile, and booking history remain intact.
+              </p>
+
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-[#626e65] uppercase block mb-1">
+                  Reason for removal (optional)
+                </label>
+                <input
+                  type="text"
+                  value={removeReason}
+                  onChange={(e) => setRemoveReason(e.target.value)}
+                  placeholder="e.g. Player requested cancellation, schedule clash"
+                  className="w-full rounded-xl border border-[#dce3da] bg-[#f8faf7] px-3.5 py-2.5 text-xs text-[#17201c] outline-none focus:border-[#a8e63d]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2 border-t border-[#edf1ea]">
+                <button
+                  type="button"
+                  disabled={isRemovingPlayer}
+                  onClick={() => {
+                    setIsRemoveModalOpen(false);
+                    setPlayerToRemove(null);
+                  }}
+                  className="flex-1 rounded-xl border border-[#dce3da] bg-[#f8faf7] py-2.5 text-xs font-bold text-[#556259] hover:bg-[#ebf0e8] transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isRemovingPlayer}
+                  onClick={handleConfirmRemovePlayer}
+                  id="confirm-remove-player-btn"
+                  data-testid="confirm-remove-player-btn"
+                  className="flex-1 rounded-xl bg-red-600 py-2.5 text-xs font-bold text-white hover:bg-red-700 transition shadow active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isRemovingPlayer ? (
+                    <>
+                      <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <span>Confirm Removal</span>
+                  )}
                 </button>
               </div>
             </motion.div>

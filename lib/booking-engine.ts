@@ -75,13 +75,14 @@ export function intervalsOverlap(
 }
 
 export function normalizeDateString(dateInput: string | Date): string {
+  if (!dateInput) return "";
   if (dateInput instanceof Date) {
     const y = dateInput.getFullYear();
     const m = String(dateInput.getMonth() + 1).padStart(2, "0");
     const d = String(dateInput.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
-  return dateInput.slice(0, 10);
+  return String(dateInput).slice(0, 10);
 }
 
 export function parseBookingDateMidnight(dateStr: string): Date {

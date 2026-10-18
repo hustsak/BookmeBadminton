@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
 export type {
   User,
@@ -32,11 +32,13 @@ type AppContextType = {
   isLoginModalOpen: boolean;
   openLoginModal: () => void;
   closeLoginModal: () => void;
-  login: (email?: string, name?: string, role?: "CUSTOMER" | "OWNER") => void;
+  login: (email?: string, name?: string, role?: "CUSTOMER" | "OWNER" | "ADMIN", id?: number) => void;
   logout: () => void;
   switchUserRole: (role: "CUSTOMER" | "OWNER") => void;
   favorites: number[];
-  toggleFavorite: (venueId: number) => void;
+  favoritesLoading: boolean;
+  refreshFavorites: (activeUserId?: number) => Promise<void>;
+  toggleFavorite: (venueId: number) => Promise<void> | void;
   isFavorite: (venueId: number) => boolean;
   venues: ClubVenue[];
   refreshVenues: () => Promise<void>;
@@ -67,6 +69,11 @@ type AppContextType = {
   }) => FriendlyMatch;
   joinFriendlyMatch: (matchId: string) => Promise<{ success: boolean; message: string }>;
   leaveFriendlyMatch: (matchId: string) => Promise<{ success: boolean; message: string }>;
+  removeFriendlyMatchParticipant: (
+    matchId: string,
+    targetUserId: number,
+    reason?: string
+  ) => Promise<{ success: boolean; message: string }>;
   deleteFriendlyMatch: (matchId: string) => Promise<{ success: boolean; message: string }>;
 };
 
@@ -448,7 +455,8 @@ export const INITIAL_VENUES: ClubVenue[] = [
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [favorites, setFavorites] = useState<number[]>([1, 3]);
+  const [favorites, setFavorites] = useState<number[]>([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [venues, setVenues] = useState<ClubVenue[]>(INITIAL_VENUES);
   const [bookings, setBookings] = useState<Booking[]>(INITIAL_BOOKINGS);
   const [friendlyMatches, setFriendlyMatches] = useState<FriendlyMatch[]>(INITIAL_FRIENDLY_MATCHES);
@@ -460,7 +468,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (savedUser) setUser(JSON.parse(savedUser));
 
       const savedFavs = localStorage.getItem("bm_favorites");
-      if (savedFavs) setFavorites(JSON.parse(savedFavs));
+      if (savedFavs) {
+        const parsed = JSON.parse(savedFavs);
+        if (Array.isArray(parsed)) setFavorites(parsed);
+      }
 
       const savedVenues = localStorage.getItem("bm_venues");
       if (savedVenues) setVenues(JSON.parse(savedVenues));
@@ -637,12 +648,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Sync on mount
+  const refreshFavorites = useCallback(async (activeUserId?: number) => {
+    const targetUserId = activeUserId ?? user?.id;
+    if (!targetUserId) {
+      return;
+    }
+    setFavoritesLoading(true);
+    try {
+      const res = await fetch("/api/favorites", {
+        headers: { "x-user-id": String(targetUserId) },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.venueIds)) {
+          setFavorites(data.venueIds);
+          try {
+            localStorage.setItem("bm_favorites", JSON.stringify(data.venueIds));
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch server favorites, using cache:", e);
+    } finally {
+      setFavoritesLoading(false);
+    }
+  }, [user?.id]);
+
+  // Sync on mount and user change
   useEffect(() => {
     refreshVenues();
     refreshBookings();
     refreshMatches();
   }, []);
+
+  useEffect(() => {
+    if (user?.id) {
+      refreshFavorites(user.id);
+      refreshBookings();
+    } else {
+      // User logged out
+      setFavorites([]);
+      try {
+        localStorage.removeItem("bm_favorites");
+      } catch {}
+    }
+  }, [user?.id, refreshFavorites]);
 
   const addClub = (
     data: Omit<ClubVenue, "id" | "rating" | "reviews" | "available">
@@ -701,13 +751,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const openLoginModal = () => setIsLoginModalOpen(true);
   const closeLoginModal = () => setIsLoginModalOpen(false);
 
-  const login = (email?: string, name?: string, role?: "CUSTOMER" | "OWNER") => {
+  const login = (
+    email?: string,
+    name?: string,
+    role?: "CUSTOMER" | "OWNER" | "ADMIN",
+    id?: number
+  ) => {
     const userName = name || (email ? email.split("@")[0] : DEMO_USER.name);
+    const resolvedRole = role || (email?.includes("owner") ? "OWNER" : "CUSTOMER");
+    let resolvedId = id || DEMO_USER.id;
+    if (!id && resolvedRole === "OWNER") {
+      resolvedId = 5;
+    }
     const loggedInUser: User = {
       ...DEMO_USER,
+      id: resolvedId,
       email: email || DEMO_USER.email,
       name: userName,
-      role: role || (email?.includes("owner") ? "OWNER" : "CUSTOMER"),
+      role: resolvedRole,
     };
     setUser(loggedInUser);
     setIsLoginModalOpen(false);
@@ -733,12 +794,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setUser(null);
+    setFavorites([]);
+    try {
+      localStorage.removeItem("bm_favorites");
+    } catch {}
   };
 
-  const toggleFavorite = (venueId: number) => {
-    setFavorites((prev) =>
-      prev.includes(venueId) ? prev.filter((id) => id !== venueId) : [...prev, venueId]
-    );
+  const toggleFavorite = async (venueId: number) => {
+    if (!user) {
+      openLoginModal();
+      return;
+    }
+
+    const prevFavorites = [...favorites];
+    const isCurrentlyFav = prevFavorites.includes(venueId);
+    const newFavorites = isCurrentlyFav
+      ? prevFavorites.filter((id) => id !== venueId)
+      : [...prevFavorites, venueId];
+
+    // Optimistic UI update
+    setFavorites(newFavorites);
+    try {
+      localStorage.setItem("bm_favorites", JSON.stringify(newFavorites));
+    } catch {}
+
+    try {
+      const res = await fetch("/api/favorites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": String(user.id),
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          venueId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        // Rollback optimistic update on server error
+        setFavorites(prevFavorites);
+        try {
+          localStorage.setItem("bm_favorites", JSON.stringify(prevFavorites));
+        } catch {}
+      } else if (typeof data.isFavorite === "boolean") {
+        setFavorites((current) => {
+          const has = current.includes(venueId);
+          if (data.isFavorite && !has) return [...current, venueId];
+          if (!data.isFavorite && has) return current.filter((id) => id !== venueId);
+          return current;
+        });
+      }
+    } catch (err) {
+      // Rollback on network error
+      setFavorites(prevFavorites);
+      try {
+        localStorage.setItem("bm_favorites", JSON.stringify(prevFavorites));
+      } catch {}
+    }
   };
 
   const isFavorite = (venueId: number) => favorites.includes(venueId);
@@ -974,6 +1088,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { success: true, message: "You left the match." };
   };
 
+  const removeFriendlyMatchParticipant = async (
+    matchId: string,
+    targetUserId: number,
+    reason?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const currentUser = user || DEMO_USER;
+    const numericId = parseInt(matchId.replace(/\D/g, ""), 10);
+
+    if (!isNaN(numericId) && numericId > 0) {
+      try {
+        const res = await fetch(`/api/matches/${numericId}/remove-player`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-user-id": String(currentUser.id),
+          },
+          body: JSON.stringify({
+            userId: currentUser.id,
+            targetUserId,
+            reason,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          await refreshMatches();
+          return {
+            success: true,
+            message: data.message || "Player removed from match. Spot reopened.",
+          };
+        } else {
+          return {
+            success: false,
+            message: data.message || "Failed to remove player.",
+          };
+        }
+      } catch (e: any) {
+        console.warn("Server participant removal failed:", e);
+      }
+    }
+
+    // Local fallback
+    setFriendlyMatches((prev) =>
+      prev.map((match) => {
+        if (match.id !== matchId) return match;
+        const updatedPlayers = match.joinedPlayers.filter((p) => p.id !== targetUserId);
+        return {
+          ...match,
+          joinedPlayers: updatedPlayers,
+          status: updatedPlayers.length < match.totalSlots ? "OPEN" : match.status,
+        };
+      })
+    );
+    return { success: true, message: "Player removed from match." };
+  };
+
   const deleteFriendlyMatch = async (matchId: string): Promise<{ success: boolean; message: string }> => {
     const currentUser = user || DEMO_USER;
     const numericId = parseInt(matchId.replace(/\D/g, ""), 10);
@@ -1012,6 +1181,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         favorites,
+        favoritesLoading,
+        refreshFavorites,
         toggleFavorite,
         isFavorite,
         venues,
@@ -1029,6 +1200,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createFriendlyMatch,
         joinFriendlyMatch,
         leaveFriendlyMatch,
+        removeFriendlyMatchParticipant,
         deleteFriendlyMatch,
       }}
     >

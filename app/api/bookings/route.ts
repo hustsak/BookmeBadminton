@@ -105,12 +105,14 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
+    const bookingDate = body.bookingDate || body.date;
+    const headerUserId = request.headers.get("x-user-id");
+    const userId = body.userId !== undefined ? body.userId : (headerUserId ? Number(headerUserId) : undefined);
+
     const {
       courtId,
-      bookingDate,
       startTime,
       duration,
-      userId,
       customerName,
       customerEmail,
       customerPhone,

@@ -42,6 +42,7 @@ async function runOwnerAnalyticsTests() {
 
   // --- SEED TEST USERS AND VENUES ---
   const timestamp = Date.now();
+  let zeroVenueId: number | null = null;
   const ownerAlphaEmail = `owner.alpha.${timestamp}@test.com`;
   const ownerBetaEmail = `owner.beta.${timestamp}@test.com`;
   const customerEmail = `player.analytics.${timestamp}@test.com`;
@@ -441,6 +442,7 @@ async function runOwnerAnalyticsTests() {
         ownerId: ownerAlpha.id,
       },
     });
+    zeroVenueId = zeroVenue.id;
 
     const zeroCourt = await prisma.court.create({
       data: {
@@ -633,6 +635,28 @@ async function runOwnerAnalyticsTests() {
 
   if (failedCount > 0) {
     process.exit(1);
+  }
+
+  // --- CLEAN UP TEST DATA ---
+  try {
+    const vIds = [venueAlpha.id, venueBeta.id, ...(zeroVenueId ? [zeroVenueId] : [])];
+    const cIds = (
+      await prisma.court.findMany({
+        where: { venueId: { in: vIds } },
+        select: { id: true },
+      })
+    ).map((c) => c.id);
+
+    await prisma.payment.deleteMany({ where: { booking: { courtId: { in: cIds } } } });
+    await prisma.booking.deleteMany({ where: { courtId: { in: cIds } } });
+    await prisma.maintenanceBlock.deleteMany({ where: { courtId: { in: cIds } } });
+    await prisma.court.deleteMany({ where: { id: { in: cIds } } });
+    await prisma.venue.deleteMany({ where: { id: { in: vIds } } });
+    await prisma.user.deleteMany({
+      where: { id: { in: [ownerAlpha.id, ownerBeta.id, customer.id] } },
+    });
+  } catch (cleanErr) {
+    console.warn("Owner analytics test cleanup notice:", cleanErr);
   }
 }
 

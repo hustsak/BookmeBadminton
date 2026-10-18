@@ -88,29 +88,19 @@ export async function getAuthenticatedUser(
 }
 
 /**
- * Resolves owner user from request headers/cookies/query.
- * Enforces role verification (OWNER or ADMIN).
- * In development/demo, falls back to the default OWNER in the database if unauthenticated.
+ * Resolves owner user from verified request headers/cookies/bearer token.
+ * Enforces strict role verification (OWNER or ADMIN).
+ * Never accepts unverified query params to impersonate other owners.
  */
 export async function getAuthenticatedOwner(
   request: Request,
   options?: { fallbackToDefault?: boolean }
 ): Promise<{ user: AuthenticatedUser | null; isForbidden: boolean }> {
-  const { searchParams } = new URL(request.url);
-  const ownerIdParam = searchParams.get("ownerId");
-  const parsedOwnerId = ownerIdParam ? parseInt(ownerIdParam, 10) : undefined;
-
-  const hasExplicitCredentials =
-    Boolean(request.headers.get("x-user-id")) ||
-    Boolean(request.headers.get("authorization")) ||
-    Boolean(request.headers.get("cookie")) ||
-    Boolean(ownerIdParam);
-
-  let user = await getAuthenticatedUser(request, parsedOwnerId);
+  let user = await getAuthenticatedUser(request);
 
   // In production or test, NEVER fallback to default owner unless explicitly requested in options
   const isDev = process.env.NODE_ENV === "development";
-  const shouldFallback = (options?.fallbackToDefault ?? isDev) && !hasExplicitCredentials && isDev;
+  const shouldFallback = (options?.fallbackToDefault ?? false) && isDev;
 
   if (!user && shouldFallback) {
     const defaultOwner = await prisma.user.findFirst({
@@ -145,29 +135,19 @@ export async function getAuthenticatedOwner(
 }
 
 /**
- * Resolves admin user from request headers/cookies/query.
+ * Resolves admin user from verified request headers/cookies/bearer token.
  * Enforces strict ADMIN role verification.
- * In development mode only, falls back to the first active ADMIN if unauthenticated.
+ * Never accepts unverified query params to impersonate admins.
  */
 export async function getAuthenticatedAdmin(
   request: Request,
   options?: { fallbackToDefault?: boolean }
 ): Promise<{ user: AuthenticatedUser | null; isForbidden: boolean }> {
-  const { searchParams } = new URL(request.url);
-  const adminIdParam = searchParams.get("adminId");
-  const parsedAdminId = adminIdParam ? parseInt(adminIdParam, 10) : undefined;
+  let user = await getAuthenticatedUser(request);
 
-  const hasExplicitCredentials =
-    Boolean(request.headers.get("x-user-id")) ||
-    Boolean(request.headers.get("authorization")) ||
-    Boolean(request.headers.get("cookie")) ||
-    Boolean(adminIdParam);
-
-  let user = await getAuthenticatedUser(request, parsedAdminId);
-
-  // Fallback to active admin ONLY in development mode when no credentials were provided
+  // Fallback to active admin ONLY if explicitly requested and in development mode
   const isDev = process.env.NODE_ENV === "development";
-  const shouldFallback = (options?.fallbackToDefault ?? isDev) && !hasExplicitCredentials && isDev;
+  const shouldFallback = (options?.fallbackToDefault ?? false) && isDev;
 
   if (!user && shouldFallback) {
     const defaultAdmin = await prisma.user.findFirst({

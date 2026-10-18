@@ -11,6 +11,8 @@ import {
   Calendar,
   Bell,
   User as UserIcon,
+  ShieldCheck,
+  Building2,
 } from "lucide-react";
 
 import { useUnreadNotifications } from "@/hooks";
@@ -28,36 +30,69 @@ export function MobileBottomNav() {
     return null;
   }
 
-  const navItems = [
-    {
-      label: "Courts",
-      href: "/",
-      icon: Compass,
-      badge: 0,
-      isActive: pathname === "/",
-    },
-    {
-      label: "Matches",
-      href: "/friendly-matches",
-      icon: Users,
-      badge: openMatchesCount,
-      isActive: pathname === "/friendly-matches" || pathname.startsWith("/players"),
-    },
-    {
-      label: "Bookings",
-      href: "/bookings",
-      icon: Calendar,
-      badge: activeBookingsCount,
-      isActive: pathname === "/bookings",
-    },
-    {
-      label: "Alerts",
-      href: "/notifications",
-      icon: Bell,
-      badge: unreadNotifications,
-      isActive: pathname === "/notifications",
-    },
-  ];
+  const isOwner = user?.role === "OWNER";
+
+  const navItems = isOwner
+    ? [
+        {
+          label: "Dashboard",
+          href: "/owner",
+          icon: ShieldCheck,
+          badge: 0,
+          isActive: pathname === "/owner" && !pathname.includes("tab="),
+        },
+        {
+          label: "Courts",
+          href: "/owner?tab=courts",
+          icon: Building2,
+          badge: 0,
+          isActive: pathname === "/owner" && pathname.includes("tab=courts"),
+        },
+        {
+          label: "Bookings",
+          href: "/owner?tab=bookings",
+          icon: Calendar,
+          badge: 0,
+          isActive: pathname === "/owner" && pathname.includes("tab=bookings"),
+        },
+        {
+          label: "Club Profile",
+          href: "/owner?tab=profile",
+          icon: UserIcon,
+          badge: 0,
+          isActive: pathname === "/owner" && pathname.includes("tab=profile"),
+        },
+      ]
+    : [
+        {
+          label: "Courts",
+          href: "/",
+          icon: Compass,
+          badge: 0,
+          isActive: pathname === "/",
+        },
+        {
+          label: "Matches",
+          href: "/friendly-matches",
+          icon: Users,
+          badge: openMatchesCount,
+          isActive: pathname === "/friendly-matches" || pathname.startsWith("/players"),
+        },
+        {
+          label: "Bookings",
+          href: "/bookings",
+          icon: Calendar,
+          badge: activeBookingsCount,
+          isActive: pathname === "/bookings",
+        },
+        {
+          label: "Alerts",
+          href: "/notifications",
+          icon: Bell,
+          badge: unreadNotifications,
+          isActive: pathname === "/notifications",
+        },
+      ];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 md:hidden pointer-events-none pb-safe">

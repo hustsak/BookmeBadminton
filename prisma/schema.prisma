@@ -37,6 +37,7 @@ model User {
   auditLogs              AuditLog[]              @relation("AdminAuditLogs")
   resolvedReports        ReviewReport[]          @relation("ReportResolver")
   updatedConfigs         PlatformConfig[]        @relation("ConfigUpdater")
+  favorites              UserFavorite[]
 }
 
 enum UserStatus {
@@ -70,6 +71,7 @@ model Venue {
   courts           Court[]
   matches          Match[]
   homeVenuePlayers PlayerProfile[] @relation("HomeVenue")
+  favoritedBy      UserFavorite[]
 
   @@index([ownerId])
 }
@@ -485,4 +487,18 @@ model PlatformConfig {
   updatedAt              DateTime @updatedAt
   updatedById            Int?
   updatedBy              User?    @relation("ConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+model UserFavorite {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  venueId   Int
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, venueId])
+  @@index([userId])
+  @@index([venueId])
 }

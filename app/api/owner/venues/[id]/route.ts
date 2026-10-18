@@ -1,16 +1,39 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedOwner } from "@/lib/auth";
 
 export async function PATCH(
   request: Request,
   props: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { user, isForbidden } = await getAuthenticatedOwner(request);
+
+    if (isForbidden) {
+      return NextResponse.json(
+        { success: false, code: "FORBIDDEN", message: "Access denied. Owner or Admin privileges required." },
+        { status: 403 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, code: "UNAUTHORIZED", message: "Authentication required." },
+        { status: 401 }
+      );
+    }
+
     const { id } = await props.params;
     const venueId = parseInt(id, 10);
-    const body = await request.json();
+    if (isNaN(venueId)) {
+      return NextResponse.json(
+        { success: false, message: "Invalid venue ID." },
+        { status: 400 }
+      );
+    }
 
-    const { ownerId, openTime, closeTime, description, address, location } = body;
+    const body = await request.json().catch(() => ({}));
+    const { name, openTime, closeTime, description, address, location } = body;
 
     const venue = await prisma.venue.findUnique({
       where: { id: venueId },
@@ -23,8 +46,8 @@ export async function PATCH(
       );
     }
 
-    // Strict Venue Isolation: Owner must own this venue
-    if (ownerId && venue.ownerId !== parseInt(ownerId, 10)) {
+    // Strict Ownership Enforcement: Must own this venue or be Admin
+    if (user.role !== "ADMIN" && venue.ownerId !== user.id) {
       return NextResponse.json(
         {
           success: false,
@@ -38,6 +61,7 @@ export async function PATCH(
     const updated = await prisma.venue.update({
       where: { id: venueId },
       data: {
+        name: name ? name.trim() : undefined,
         openTime: openTime || undefined,
         closeTime: closeTime || undefined,
         description: description !== undefined ? description : undefined,
@@ -59,3 +83,4 @@ export async function PATCH(
     );
   }
 }
+

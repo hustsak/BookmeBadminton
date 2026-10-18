@@ -1,6 +1,6 @@
 // BookMeBadminton Progressive Web App Service Worker
 // Cache Versioning
-const CACHE_NAME = "bmb-static-v2";
+const CACHE_NAME = "bmb-static-v3";
 const OFFLINE_URL = "/offline";
 
 const PRECACHE_ASSETS = [
@@ -64,7 +64,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2. Never cache ANY /api/ requests:
+  // 2. Never intercept Next.js internal chunks (/_next/).
+  // Turbopack (dev) and Webpack (prod) both serve JS chunks under /_next/ with
+  // their own cache-busting hashes and HTTP cache headers. The service worker
+  // must NOT serve stale-while-revalidate versions of these, as chunk content
+  // changes on every recompile and stale responses cause "module factory not
+  // available" runtime errors.
+  if (url.pathname.startsWith("/_next/")) {
+    return;
+  }
+
+  // 3. Never cache ANY /api/ requests:
   // Live availability, booking creation, payments, matches, notifications must always be live.
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
@@ -114,9 +124,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 4. Static assets (images, fonts, scripts, stylesheets): Stale-While-Revalidate or Cache-First
+  // 5. Static assets (images, fonts, stylesheets): Stale-While-Revalidate or Cache-First
   const isStaticAsset =
-    url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/icons/") ||
     url.pathname.startsWith("/court_image/") ||
     url.pathname.endsWith(".png") ||

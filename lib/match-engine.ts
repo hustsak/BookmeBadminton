@@ -5,6 +5,7 @@ import {
   ParticipantRole,
   ParticipantStatus,
   NotificationType,
+  UserRole,
 } from "@prisma/client";
 import { cancelBooking, isSlotInPast, normalizeDateString } from "./booking-engine";
 import { createNotification } from "./notification-service";
@@ -592,17 +593,30 @@ export async function joinMatch(matchId: number, userId: number) {
 }
 
 /**
- * Leave a match and reopen spot if full
+ * Remove a participant from a match roster.
+ * Permission: Match Creator (Host), Admin, or the player themselves.
+ * Automatically reopens match spot if match was FULL.
+ * Keeps player account and profile intact.
  */
-export async function leaveMatch(matchId: number, userId: number) {
+export async function removeParticipantFromMatch(
+  matchId: number,
+  requestingUserId: number,
+  targetUserId: number,
+  reason?: string
+) {
   const result = await prisma.$transaction(async (tx) => {
-    // Acquire PostgreSQL advisory lock
+    // Acquire PostgreSQL advisory lock on this match
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('match_' || ${matchId}))`;
 
     const match = await tx.match.findUnique({
       where: { id: matchId },
       include: {
-        participants: true,
+        creator: true,
+        participants: {
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
       },
     });
 
@@ -610,21 +624,66 @@ export async function leaveMatch(matchId: number, userId: number) {
       throw new MatchNotFoundError(`Match #${matchId} does not exist.`);
     }
 
-    if (match.creatorId === userId) {
+    if (match.status === MatchStatus.CANCELLED) {
+      throw new MatchValidationError("Cannot modify participants of a cancelled match.");
+    }
+    if (match.status === MatchStatus.COMPLETED) {
+      throw new MatchValidationError("Cannot modify participants of a completed match.");
+    }
+
+    // Permission check:
+    const isSelf = requestingUserId === targetUserId;
+    const isCreator = match.creatorId === requestingUserId;
+
+    const requestingUser = await tx.user.findUnique({
+      where: { id: requestingUserId },
+      select: { id: true, role: true },
+    });
+    const isAdmin = requestingUser?.role === UserRole.ADMIN;
+
+    if (!isSelf && !isCreator && !isAdmin) {
+      throw new MatchAuthorizationError(
+        "You do not have permission to remove players from this match. Only the host or an administrator can manage participants."
+      );
+    }
+
+    // Host cannot remove themselves from participant list; host must cancel the match
+    if (match.creatorId === targetUserId) {
       throw new MatchValidationError(
-        "As the creator and host, you cannot leave the match. You may cancel the match if you can no longer host."
+        "The match host cannot be removed from the participant list. If you can no longer host, please cancel the match."
       );
     }
 
     const participant = match.participants.find(
-      (p) => p.userId === userId && p.status === ParticipantStatus.JOINED
+      (p) => p.userId === targetUserId && p.status === ParticipantStatus.JOINED
     );
 
     if (!participant) {
-      throw new MatchValidationError("You are not currently an active player in this match.");
+      // Graceful idempotency: if already removed or not joined, fetch current state without crashing
+      const currentUpdated = await tx.match.findUnique({
+        where: { id: matchId },
+        include: {
+          creator: { select: { id: true, name: true, email: true, phone: true } },
+          venue: { select: { id: true, name: true, location: true, address: true, imageUrl: true } },
+          court: { select: { id: true, name: true, priceHour: true, surface: true } },
+          booking: { select: { id: true, bookingCode: true, status: true, startTime: true, endTime: true } },
+          participants: {
+            include: {
+              user: { select: { id: true, name: true, email: true, phone: true } },
+            },
+            orderBy: { joinedAt: "asc" },
+          },
+        },
+      });
+      return {
+        match: formatMatchWithDetails(currentUpdated, requestingUserId),
+        alreadyRemoved: true,
+        removedUserName: "Player",
+        isSelf,
+      };
     }
 
-    // Mark participant as LEFT
+    // Mark participant as LEFT (preserves player account and profile intact)
     await tx.matchParticipant.update({
       where: { id: participant.id },
       data: { status: ParticipantStatus.LEFT },
@@ -662,27 +721,51 @@ export async function leaveMatch(matchId: number, userId: number) {
       },
     });
 
-    return formatMatchWithDetails(updated, userId);
+    return {
+      match: formatMatchWithDetails(updated, requestingUserId),
+      alreadyRemoved: false,
+      removedUserName: participant.user?.name || "Player",
+      isSelf,
+    };
   });
 
-  // Post-commit notification for match creator
+  // Post-commit notifications
   try {
-    const leavingUser = await prisma.user.findUnique({ where: { id: userId } });
-    const userName = leavingUser?.name || "A player";
-    await createNotification({
-      userId: result.creatorId,
-      type: NotificationType.MATCH_LEFT,
-      title: `Player Left: ${result.title}`,
-      message: `${userName} has left your match at ${result.venue?.name || "the club"}. A spot has reopened.`,
-      link: `/friendly-matches/${result.id}`,
-      metadata: { matchId: result.id, leavingUserId: userId },
-      idempotencyKey: `match-${result.id}-leave-${userId}-${Date.now().toString().slice(0, 8)}`,
-    });
+    if (result.isSelf) {
+      // Player left on their own: notify creator
+      await createNotification({
+        userId: result.match.creatorId,
+        type: NotificationType.MATCH_LEFT,
+        title: `Player Left: ${result.match.title}`,
+        message: `${result.removedUserName} has left your match at ${result.match.venue?.name || "the club"}. A spot has reopened.`,
+        link: `/friendly-matches/${result.match.id}`,
+        metadata: { matchId: result.match.id, leavingUserId: targetUserId },
+        idempotencyKey: `match-${result.match.id}-leave-${targetUserId}-${Date.now().toString().slice(0, 8)}`,
+      });
+    } else {
+      // Host or Admin removed player: notify removed player
+      await createNotification({
+        userId: targetUserId,
+        type: NotificationType.MATCH_LEFT,
+        title: `Removed from Match: ${result.match.title}`,
+        message: `You were removed from the match by the host${reason ? `: "${reason}"` : "."}.`,
+        link: `/friendly-matches/${result.match.id}`,
+        metadata: { matchId: result.match.id, removedBy: requestingUserId, reason },
+        idempotencyKey: `match-${result.match.id}-kicked-${targetUserId}-${Date.now().toString().slice(0, 8)}`,
+      });
+    }
   } catch (err) {
-    console.warn("Failed to dispatch match leave notification:", err);
+    console.warn("Failed to dispatch match removal notification:", err);
   }
 
-  return result;
+  return result.match;
+}
+
+/**
+ * Leave a match and reopen spot if full
+ */
+export async function leaveMatch(matchId: number, userId: number) {
+  return await removeParticipantFromMatch(matchId, userId, userId);
 }
 
 /**

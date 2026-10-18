@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedOwner } from "@/lib/auth";
 import {
   normalizeDateString,
   parseBookingDateMidnight,
@@ -10,8 +11,24 @@ import {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { courtId, date, startTime, endTime, reason, ownerId } = body;
+    const { user, isForbidden } = await getAuthenticatedOwner(request);
+
+    if (isForbidden) {
+      return NextResponse.json(
+        { success: false, code: "FORBIDDEN", message: "Access denied. Owner or Admin privileges required." },
+        { status: 403 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, code: "UNAUTHORIZED", message: "Authentication required." },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const { courtId, date, startTime, endTime, reason } = body;
 
     if (!courtId || !date || !startTime || !endTime) {
       return NextResponse.json(
@@ -39,8 +56,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Strict Venue Isolation
-    if (ownerId && court.venue.ownerId !== parseInt(ownerId, 10)) {
+    // Strict Ownership Enforcement: Must own this court's venue or be Admin
+    if (user.role !== "ADMIN" && court.venue.ownerId !== user.id) {
       return NextResponse.json(
         {
           success: false,
