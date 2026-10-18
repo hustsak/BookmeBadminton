@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { MatchStatus, MatchResultStatus, ParticipantStatus, ReviewModerationStatus, SkillLevel } from "@prisma/client";
+import { MatchStatus, MatchResultStatus, ReviewModerationStatus, SkillLevel } from "@prisma/client";
 
 export type LeaderboardMetric = "wins" | "winRate" | "rating" | "activity";
 export type LeaderboardPeriod = "all-time" | "monthly" | "weekly";

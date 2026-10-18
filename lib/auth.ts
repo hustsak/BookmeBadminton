@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { User, UserRole, UserStatus } from "@prisma/client";
+import { UserRole, UserStatus } from "@prisma/client";
 
 export interface AuthenticatedUser {
   id: number;

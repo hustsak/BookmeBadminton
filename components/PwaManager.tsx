@@ -15,9 +15,10 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+import { useNetworkStatus } from "@/hooks";
+
 export function PwaManager() {
-  const [isOffline, setIsOffline] = useState(false);
-  const [justReconnected, setJustReconnected] = useState(false);
+  const { isOffline, justReconnected } = useNetworkStatus();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
@@ -35,22 +36,6 @@ export function PwaManager() {
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isIosDevice);
-
-    // 3. Online/Offline listeners
-    setIsOffline(!navigator.onLine);
-
-    const handleOnline = () => {
-      setIsOffline(false);
-      setJustReconnected(true);
-      setTimeout(() => setJustReconnected(false), 4000);
-    };
-
-    const handleOffline = () => {
-      setIsOffline(true);
-    };
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
 
     // 4. Service Worker Registration
     if ("serviceWorker" in navigator && process.env.NODE_ENV !== "test") {
@@ -109,8 +94,6 @@ export function PwaManager() {
     window.addEventListener("bookme:open_install_modal", handleOpenInstall);
 
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
       window.removeEventListener("bookme:open_install_modal", handleOpenInstall);
     };

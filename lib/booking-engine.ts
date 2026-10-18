@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { Prisma, NotificationType } from "@prisma/client";
+import { NotificationType } from "@prisma/client";
 import { createNotification } from "./notification-service";
 
 export class SlotConflictError extends Error {
@@ -367,14 +367,38 @@ export async function createBooking(input: CreateBookingInput) {
   }
 
   const endTime = addHoursToTime(startTime, parsedDuration);
+  if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+    throw new ValidationError("End time must be strictly after start time.");
+  }
   const bookingDateUtc = parseBookingDateMidnight(normalizedDate);
 
   // 3. Atomic Database Transaction with PostgreSQL Advisory Lock
-  const result = await prisma.$transaction(async (tx) => {
-    // Acquire transaction-scoped advisory lock for the court + date
-    // Prevents concurrent requests from race conditions
-    const lockKey = `court-${parsedCourtId}-${normalizedDate}`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+  const txResult = await prisma.$transaction(async (tx) => {
+    // Fast-fail if contention exceeds 5 seconds
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+
+    // Acquire transaction-scoped advisory lock for (courtId, hashtext(date))
+    // Uses 64-bit pair (int4, int4) to guarantee zero cross-court interference
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${parsedCourtId}::integer, hashtext(${normalizedDate})::integer)`;
+
+    // Re-verify idempotency within transaction in case of concurrent replay
+    if (idempotencyKey) {
+      const existingInTx = await tx.booking.findUnique({
+        where: { idempotencyKey },
+        include: {
+          court: { include: { venue: true } },
+          user: true,
+          payments: true,
+        },
+      });
+
+      if (existingInTx) {
+        return {
+          booking: existingInTx,
+          isIdempotentReplay: true,
+        };
+      }
+    }
 
     // Re-verify court and venue operating hours
     const court = await tx.court.findUnique({
@@ -480,40 +504,63 @@ export async function createBooking(input: CreateBookingInput) {
     const randomSuffix = Math.floor(10000 + Math.random() * 90000);
     const bookingCode = `BK-${Date.now().toString().slice(-4)}-${randomSuffix}`;
 
-    // Create the booking
-    const booking = await tx.booking.create({
-      data: {
-        bookingCode,
-        userId: finalUserId,
-        courtId: parsedCourtId,
-        bookingDate: bookingDateUtc,
-        startTime,
-        endTime,
-        duration: parsedDuration,
-        pricePerHour,
-        totalPrice,
-        status: "CONFIRMED",
-        paymentStatus: "PENDING",
-        paymentMethod,
-        idempotencyKey: idempotencyKey || undefined,
-        customerName: customerName || null,
-        customerEmail: customerEmail || null,
-        customerPhone: customerPhone || null,
-        notes: notes || null,
-      },
-      include: {
-        court: {
-          include: {
-            venue: true,
-          },
+    try {
+      // Create the booking
+      const booking = await tx.booking.create({
+        data: {
+          bookingCode,
+          userId: finalUserId,
+          courtId: parsedCourtId,
+          bookingDate: bookingDateUtc,
+          startTime,
+          endTime,
+          duration: parsedDuration,
+          pricePerHour,
+          totalPrice,
+          status: "CONFIRMED",
+          paymentStatus: "PENDING",
+          paymentMethod,
+          idempotencyKey: idempotencyKey || undefined,
+          customerName: customerName || null,
+          customerEmail: customerEmail || null,
+          customerPhone: customerPhone || null,
+          notes: notes || null,
         },
-        user: true,
-        payments: true,
-      },
-    });
+        include: {
+          court: {
+            include: {
+              venue: true,
+            },
+          },
+          user: true,
+          payments: true,
+        },
+      });
 
-    return booking;
+      return { booking, isIdempotentReplay: false };
+    } catch (err: any) {
+      if (err?.code === "P2002" && idempotencyKey) {
+        const replay = await tx.booking.findUnique({
+          where: { idempotencyKey },
+          include: {
+            court: { include: { venue: true } },
+            user: true,
+            payments: true,
+          },
+        });
+        if (replay) {
+          return { booking: replay, isIdempotentReplay: true };
+        }
+      }
+      throw err;
+    }
   });
+
+  if (txResult.isIdempotentReplay) {
+    return txResult;
+  }
+
+  const result = txResult.booking;
 
   // Post-commit notification for booking creation
   try {
@@ -534,6 +581,194 @@ export async function createBooking(input: CreateBookingInput) {
     booking: result,
     isIdempotentReplay: false,
   };
+}
+
+// -------------------------------------------------------------
+// Rescheduling Engine
+// -------------------------------------------------------------
+
+export type RescheduleBookingInput = {
+  bookingId: number;
+  newBookingDate: string;
+  newStartTime: string;
+  newDuration?: number;
+  rescheduledByUserId?: number;
+};
+
+export async function rescheduleBooking(input: RescheduleBookingInput) {
+  const {
+    bookingId,
+    newBookingDate,
+    newStartTime,
+    newDuration,
+    rescheduledByUserId,
+  } = input;
+
+  const parsedBookingId = Number(bookingId);
+  if (!Number.isInteger(parsedBookingId) || parsedBookingId <= 0) {
+    throw new ValidationError("Invalid booking ID.");
+  }
+
+  const normalizedDate = normalizeDateString(newBookingDate);
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(normalizedDate)) {
+    throw new ValidationError("Invalid booking date format. Expected YYYY-MM-DD.");
+  }
+
+  const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!timeRegex.test(newStartTime)) {
+    throw new ValidationError("Invalid start time format. Expected HH:mm.");
+  }
+
+  // Prevent past dates/times
+  if (isSlotInPast(normalizedDate, newStartTime)) {
+    throw new ValidationError("Cannot reschedule to a time in the past.");
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Fetch current booking
+    const booking = await tx.booking.findUnique({
+      where: { id: parsedBookingId },
+      include: {
+        court: { include: { venue: true } },
+        user: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundError("Booking not found.");
+    }
+
+    if (booking.status === "CANCELLED") {
+      throw new ValidationError("Cannot reschedule a cancelled booking.");
+    }
+
+    if (booking.status === "COMPLETED") {
+      throw new ValidationError("Cannot reschedule a completed booking.");
+    }
+
+    // Authorization check
+    if (rescheduledByUserId) {
+      const isCustomer = booking.userId === rescheduledByUserId;
+      const isOwner = booking.court.venue.ownerId === rescheduledByUserId;
+      if (!isCustomer && !isOwner) {
+        throw new AuthorizationError("You are not authorized to reschedule this booking.");
+      }
+    }
+
+    const durationToUse = newDuration !== undefined ? Number(newDuration) : booking.duration;
+    if (!Number.isInteger(durationToUse) || durationToUse < 1 || durationToUse > 3) {
+      throw new ValidationError("Duration must be between 1 and 3 hours.");
+    }
+
+    const newEndTime = addHoursToTime(newStartTime, durationToUse);
+    if (timeToMinutes(newEndTime) <= timeToMinutes(newStartTime)) {
+      throw new ValidationError("End time must be strictly after start time.");
+    }
+
+    // Set lock timeout and acquire advisory lock for target court + target date
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${booking.courtId}::integer, hashtext(${normalizedDate})::integer)`;
+
+    // Operating hours check
+    const openTime = booking.court.venue.openTime || "06:00";
+    const closeTime = booking.court.venue.closeTime || "23:00";
+
+    if (timeToMinutes(newStartTime) < timeToMinutes(openTime)) {
+      throw new ValidationError(`Start time is before venue opening hours (${openTime}).`);
+    }
+
+    if (timeToMinutes(newEndTime) > timeToMinutes(closeTime)) {
+      throw new ValidationError(`Booking extends past venue closing hours (${closeTime}).`);
+    }
+
+    const startOfDay = new Date(`${normalizedDate}T00:00:00.000Z`);
+    const endOfDay = new Date(`${normalizedDate}T23:59:59.999Z`);
+
+    // Check maintenance overlaps
+    const maintenanceBlocks = await tx.maintenanceBlock.findMany({
+      where: {
+        courtId: booking.courtId,
+        date: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+    });
+
+    for (const mb of maintenanceBlocks) {
+      if (intervalsOverlap(newStartTime, newEndTime, mb.startTime, mb.endTime)) {
+        throw new SlotConflictError(
+          `This court is scheduled for maintenance from ${mb.startTime} to ${mb.endTime} (${mb.reason || "Maintenance"}).`
+        );
+      }
+    }
+
+    // Check active bookings excluding this booking
+    const activeBookings = await tx.booking.findMany({
+      where: {
+        courtId: booking.courtId,
+        id: { not: parsedBookingId },
+        bookingDate: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        status: {
+          not: "CANCELLED",
+        },
+      },
+    });
+
+    for (const b of activeBookings) {
+      const bEndTime = b.endTime || addHoursToTime(b.startTime, b.duration);
+      if (intervalsOverlap(newStartTime, newEndTime, b.startTime, bEndTime)) {
+        throw new SlotConflictError(
+          `This court is already reserved by another player for ${b.startTime} - ${bEndTime}. Please choose another slot.`
+        );
+      }
+    }
+
+    // Recalculate price if duration changed
+    const pricePerHour = booking.pricePerHour || booking.court.priceHour;
+    const totalPrice = pricePerHour * durationToUse;
+    const bookingDateUtc = parseBookingDateMidnight(normalizedDate);
+
+    // Update booking
+    const updated = await tx.booking.update({
+      where: { id: parsedBookingId },
+      data: {
+        bookingDate: bookingDateUtc,
+        startTime: newStartTime,
+        endTime: newEndTime,
+        duration: durationToUse,
+        totalPrice,
+      },
+      include: {
+        court: { include: { venue: true } },
+        user: true,
+        payments: true,
+      },
+    });
+
+    return updated;
+  });
+
+  // Post-commit notification for reschedule
+  try {
+    await createNotification({
+      userId: result.userId,
+      type: NotificationType.BOOKING_CONFIRMED,
+      title: `Booking Rescheduled: Court #${result.court.name}`,
+      message: `Your booking ${result.bookingCode} at ${result.court.venue.name} has been rescheduled to ${normalizedDate} (${newStartTime} - ${result.endTime}).`,
+      link: "/bookings",
+      metadata: { bookingId: result.id, bookingCode: result.bookingCode },
+      idempotencyKey: `booking-${result.id}-rescheduled-${Date.now()}`,
+    });
+  } catch (err) {
+    console.warn("Failed to dispatch reschedule notification:", err);
+  }
+
+  return result;
 }
 
 // -------------------------------------------------------------

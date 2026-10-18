@@ -7,7 +7,9 @@ import {
   calculatePlayerCompatibility,
   calculateMatchCompatibility,
   getOrCreatePlayerProfile,
+  createPlayerProfile,
   updatePlayerProfile,
+  DuplicateProfileError,
   getRecommendedPlayers,
   getRecommendedMatchesForPlayer,
   listPlayers,
@@ -166,25 +168,111 @@ async function runMatchmakingTests() {
   });
 
   // -------------------------------------------------------------
-  // TEST 3: Preventing Duplicate Profiles
+  // TEST 3: Profile Uniqueness, Error Handling & Concurrency Safety
   // -------------------------------------------------------------
-  await test("3. Preventing duplicate profiles for same user (1-to-1)", async () => {
-    // Attempting raw duplicate create with same userId
-    let duplicateRejected = false;
+  await test("3. Profile uniqueness, error handling & concurrent race safety", async () => {
+    // 3.1: Duplicate profile creation using createPlayerProfile must throw DuplicateProfileError (409)
+    let duplicateCaught = false;
+    try {
+      await createPlayerProfile(userA.id, {
+        displayName: "Duplicate Alice",
+      });
+    } catch (err: any) {
+      if (err instanceof DuplicateProfileError && err.statusCode === 409 && err.code === "P2002") {
+        duplicateCaught = true;
+      }
+    }
+    assert(duplicateCaught, "createPlayerProfile must throw DuplicateProfileError on existing profile");
+
+    // 3.2: Raw duplicate create with same userId must be blocked by DB unique constraint
+    let rawUniqueRejected = false;
     try {
       await prisma.playerProfile.create({
         data: {
           userId: userA.id,
-          displayName: "Duplicate Alice",
+          displayName: "Raw Duplicate Alice",
           skillLevel: PlayerSkillLevel.BEGINNER,
         },
       });
     } catch (err: any) {
       if (err.code === "P2002") {
-        duplicateRejected = true;
+        rawUniqueRejected = true;
       }
     }
-    assert(duplicateRejected, "Database unique constraint must block duplicate profile creation");
+    assert(rawUniqueRejected, "Database unique constraint must block duplicate profile creation");
+
+    // 3.3: Repeated getOrCreatePlayerProfile returns existing profile safely
+    const repeatA = await getOrCreatePlayerProfile(userA.id);
+    assert(repeatA.userId === userA.id, "getOrCreatePlayerProfile should safely return existing profile");
+
+    // 3.4: Concurrent creation with getOrCreatePlayerProfile produces exactly one profile
+    const raceUser1 = await prisma.user.upsert({
+      where: { email: "race.user1@test.com" },
+      update: {},
+      create: {
+        name: "Race User One",
+        email: "race.user1@test.com",
+        role: "CUSTOMER",
+      },
+    });
+    await prisma.playerProfile.deleteMany({ where: { userId: raceUser1.id } });
+
+    const [raceProfileA, raceProfileB] = await Promise.all([
+      getOrCreatePlayerProfile(raceUser1.id),
+      getOrCreatePlayerProfile(raceUser1.id),
+    ]);
+
+    assert(raceProfileA.id === raceProfileB.id, "Concurrent getOrCreate calls must return identical profile");
+    const countUser1 = await prisma.playerProfile.count({ where: { userId: raceUser1.id } });
+    assert(countUser1 === 1, "Exactly 1 profile must exist after concurrent getOrCreate calls");
+
+    // 3.5: Concurrent creation with createPlayerProfile: exactly 1 succeeds, 1 rejects with DuplicateProfileError
+    const raceUser2 = await prisma.user.upsert({
+      where: { email: "race.user2@test.com" },
+      update: {},
+      create: {
+        name: "Race User Two",
+        email: "race.user2@test.com",
+        role: "CUSTOMER",
+      },
+    });
+    await prisma.playerProfile.deleteMany({ where: { userId: raceUser2.id } });
+
+    const raceResults = await Promise.allSettled([
+      createPlayerProfile(raceUser2.id, { displayName: "Racer 1" }),
+      createPlayerProfile(raceUser2.id, { displayName: "Racer 2" }),
+    ]);
+
+    const fulfilled = raceResults.filter((r) => r.status === "fulfilled");
+    const rejected = raceResults.filter((r) => r.status === "rejected");
+    assert(fulfilled.length === 1, `Exactly 1 createPlayerProfile call must succeed (got ${fulfilled.length})`);
+    assert(rejected.length === 1, `Exactly 1 createPlayerProfile call must fail (got ${rejected.length})`);
+    const rejectReason = (rejected[0] as PromiseRejectedResult).reason;
+    assert(
+      rejectReason instanceof DuplicateProfileError,
+      `Rejection must be DuplicateProfileError, got ${rejectReason}`
+    );
+    const countUser2 = await prisma.playerProfile.count({ where: { userId: raceUser2.id } });
+    assert(countUser2 === 1, "Exactly 1 profile must exist in database for raceUser2");
+
+    // 3.6: Unexpected errors (e.g. non-existent user) are not silently converted into success
+    let nonExistentUserCaught = false;
+    try {
+      await createPlayerProfile(999999999);
+    } catch (err: any) {
+      if (err.message && err.message.includes("User does not exist")) {
+        nonExistentUserCaught = true;
+      }
+    }
+    assert(nonExistentUserCaught, "Unexpected errors must not be silently swallowed");
+
+    // Clean up test race users
+    await prisma.playerProfile.deleteMany({
+      where: { userId: { in: [raceUser1.id, raceUser2.id] } },
+    });
+    await prisma.user.deleteMany({
+      where: { id: { in: [raceUser1.id, raceUser2.id] } },
+    });
   });
 
   // -------------------------------------------------------------

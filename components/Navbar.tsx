@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { useUnreadNotifications } from "@/hooks";
 
 export function Navbar() {
   const pathname = usePathname();
@@ -33,48 +34,12 @@ export function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const { unreadCount, setUnreadCount } = useUnreadNotifications(user?.id);
   const [recentNotifications, setRecentNotifications] = useState<any[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
 
   const activeBookingsCount = bookings.filter((b) => b.status === "CONFIRMED").length;
   const openMatchesCount = friendlyMatches.filter((m) => m.status === "OPEN").length;
-
-  const fetchUnreadCount = useCallback(async () => {
-    if (!user) {
-      setUnreadCount(0);
-      return;
-    }
-    try {
-      const res = await fetch("/api/notifications/unread-count", {
-        headers: { "x-user-id": user.id.toString() },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setUnreadCount(data.count);
-        }
-      }
-    } catch {
-      // quiet fail
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchUnreadCount();
-
-    const handleFocus = () => {
-      fetchUnreadCount();
-    };
-
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("bookme:notification_refresh", handleFocus);
-
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("bookme:notification_refresh", handleFocus);
-    };
-  }, [fetchUnreadCount]);
 
   const toggleNotifications = async () => {
     const nextState = !notificationsOpen;

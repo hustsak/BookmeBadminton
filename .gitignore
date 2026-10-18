@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# database backups
+/backups/
+*.dump
+
+# turbopack / local cache
+.turbo/

@@ -38,14 +38,9 @@ import { LoginModal } from "@/components/LoginModal";
 import { CalendarModal } from "@/components/CalendarModal";
 import { PaymentQRModal } from "@/components/PaymentQRModal";
 import { useApp } from "@/context/AppContext";
+import type { CourtItem } from "@/types";
 
-type Court = {
-  id: number;
-  name: string;
-  priceHour: number;
-  image?: string;
-  surface?: string;
-};
+type Court = CourtItem;
 
 type Venue = {
   id: number;

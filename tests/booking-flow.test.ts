@@ -2,9 +2,11 @@ import { prisma } from "../lib/prisma";
 import {
   getCourtAvailability,
   createBooking,
+  rescheduleBooking,
   cancelBooking,
   recordPayment,
   intervalsOverlap,
+  parseBookingDateMidnight,
   SlotConflictError,
   ValidationError,
   NotFoundError,
@@ -434,6 +436,226 @@ async function runTests() {
 
     // Verify Pro Court belongs to Owner 2
     assert(proCourt.venue.ownerId === owner2!.id, "Pro Court must belong to Owner 2");
+  });
+
+  // -------------------------------------------------------------
+  // TEST 12: Concurrency: Partially Overlapping Simultaneous Requests
+  // Overlap rule: newStart < existingEnd AND newEnd > existingStart
+  // Request A: 10:00 - 12:00 (dur 2)
+  // Request B: 11:00 - 13:00 (dur 2)
+  // Exactly 1 must succeed, 1 must receive SlotConflictError
+  // -------------------------------------------------------------
+  await test("12. Concurrency: Partially overlapping simultaneous requests (10:00-12:00 vs 11:00-13:00)", async () => {
+    const concurrentDate = "2026-12-03";
+    const attempts = [
+      createBooking({
+        courtId,
+        bookingDate: concurrentDate,
+        startTime: "10:00",
+        duration: 2,
+        customerName: "Racer Partial 1",
+        customerEmail: "racer1@partial.test",
+      }),
+      createBooking({
+        courtId,
+        bookingDate: concurrentDate,
+        startTime: "11:00",
+        duration: 2,
+        customerName: "Racer Partial 2",
+        customerEmail: "racer2@partial.test",
+      }),
+    ];
+
+    const results = await Promise.allSettled(attempts);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+
+    assert(fulfilled.length === 1, `Exactly 1 request should succeed (got ${fulfilled.length})`);
+    assert(rejected.length === 1, `Exactly 1 request should be rejected (got ${rejected.length})`);
+    const rejectedReason = (rejected[0] as PromiseRejectedResult).reason;
+    assert(
+      rejectedReason instanceof SlotConflictError,
+      `Rejected error should be SlotConflictError, got ${rejectedReason}`
+    );
+  });
+
+  // -------------------------------------------------------------
+  // TEST 13: Concurrency: Back-to-Back Non-Overlapping Bookings Both Succeed
+  // Request A: 14:00 - 15:00
+  // Request B: 15:00 - 16:00
+  // Borders touch at 15:00, but do NOT overlap! Both must succeed!
+  // -------------------------------------------------------------
+  await test("13. Concurrency: Simultaneous back-to-back non-overlapping bookings both succeed", async () => {
+    const concurrentDate = "2026-12-03";
+    const [bookingA, bookingB] = await Promise.all([
+      createBooking({
+        courtId,
+        bookingDate: concurrentDate,
+        startTime: "14:00",
+        duration: 1,
+        customerName: "Racer BackToBack 1",
+        customerEmail: "b2b1@test.com",
+      }),
+      createBooking({
+        courtId,
+        bookingDate: concurrentDate,
+        startTime: "15:00",
+        duration: 1,
+        customerName: "Racer BackToBack 2",
+        customerEmail: "b2b2@test.com",
+      }),
+    ]);
+
+    assert(bookingA.booking.status === "CONFIRMED", "Booking A (14:00-15:00) must succeed");
+    assert(bookingB.booking.status === "CONFIRMED", "Booking B (15:00-16:00) must succeed");
+  });
+
+  // -------------------------------------------------------------
+  // TEST 14: Concurrency: Different Courts Proceed Independently Without Contention
+  // Request A: Court 1 at 17:00 - 18:00
+  // Request B: Court 2 at 17:00 - 18:00
+  // Both requests must succeed without lock collision
+  // -------------------------------------------------------------
+  await test("14. Concurrency: Bookings for different courts proceed independently", async () => {
+    const concurrentDate = "2026-12-03";
+    const [resCourt1, resCourt2] = await Promise.all([
+      createBooking({
+        courtId: courtId,
+        bookingDate: concurrentDate,
+        startTime: "17:00",
+        duration: 1,
+        customerName: "Court 1 Racer",
+        customerEmail: "court1@test.com",
+      }),
+      createBooking({
+        courtId: court2.id,
+        bookingDate: concurrentDate,
+        startTime: "17:00",
+        duration: 1,
+        customerName: "Court 2 Racer",
+        customerEmail: "court2@test.com",
+      }),
+    ]);
+
+    assert(resCourt1.booking.courtId === courtId, "Booking 1 confirmed on Court 1");
+    assert(resCourt2.booking.courtId === court2.id, "Booking 2 confirmed on Court 2");
+    assert(resCourt1.booking.status === "CONFIRMED", "Court 1 booking must be CONFIRMED");
+    assert(resCourt2.booking.status === "CONFIRMED", "Court 2 booking must be CONFIRMED");
+  });
+
+  // -------------------------------------------------------------
+  // TEST 15: Rescheduling Concurrency & Overlap Prevention
+  // -------------------------------------------------------------
+  await test("15. Rescheduling cannot introduce an overlap and respects concurrency", async () => {
+    const rDate = "2026-12-04";
+    // Setup booking A: 09:00 - 10:00
+    const { booking: bA } = await createBooking({
+      courtId,
+      bookingDate: rDate,
+      startTime: "09:00",
+      duration: 1,
+      customerName: "Reschedule Player A",
+      customerEmail: "reschedA@test.com",
+    });
+
+    // Setup booking B: 10:00 - 11:00 (occupied slot)
+    await createBooking({
+      courtId,
+      bookingDate: rDate,
+      startTime: "10:00",
+      duration: 1,
+      customerName: "Occupying Player B",
+      customerEmail: "reschedB@test.com",
+    });
+
+    // 1. Attempt to reschedule booking A to 10:00 - 11:00 (conflicts with B)
+    let conflictCaught = false;
+    try {
+      await rescheduleBooking({
+        bookingId: bA.id,
+        newBookingDate: rDate,
+        newStartTime: "10:00",
+        newDuration: 1,
+      });
+    } catch (e: any) {
+      if (e instanceof SlotConflictError) conflictCaught = true;
+    }
+    assert(conflictCaught, "Rescheduling into an occupied slot must throw SlotConflictError");
+
+    // 2. Reschedule booking A to 11:00 - 12:00 (free slot)
+    const rescheduledA = await rescheduleBooking({
+      bookingId: bA.id,
+      newBookingDate: rDate,
+      newStartTime: "11:00",
+      newDuration: 1,
+    });
+    assert(rescheduledA.startTime === "11:00", "Start time should be updated to 11:00");
+    assert(rescheduledA.endTime === "12:00", "End time should be updated to 12:00");
+
+    // 3. Verify original slot 09:00 is now released
+    const avail = await getCourtAvailability(courtId, rDate);
+    const s09 = avail.slots.find((s) => s.time === "09:00");
+    assert(s09?.status === "AVAILABLE", "Slot 09:00 should now be AVAILABLE after rescheduling away");
+  });
+
+  // -------------------------------------------------------------
+  // TEST 16: Active Pending Bookings Block Availability & Transaction Rollback
+  // -------------------------------------------------------------
+  await test("16. Active pending bookings block availability & failed transactions leave no partial data", async () => {
+    const pDate = "2026-12-04";
+    // 1. Create a booking that is active with paymentStatus: PENDING
+    const { booking: pendingBooking } = await createBooking({
+      courtId,
+      bookingDate: pDate,
+      startTime: "15:00",
+      duration: 1,
+      customerName: "Pending Customer",
+      customerEmail: "pending@test.com",
+    });
+    assert(pendingBooking.paymentStatus === "PENDING", "Payment status should be PENDING");
+
+    // Verify availability shows it as BOOKED (blocking)
+    const avail = await getCourtAvailability(courtId, pDate);
+    const s15 = avail.slots.find((s) => s.time === "15:00");
+    assert(s15?.status === "BOOKED", "Slot with pending payment must still block availability");
+
+    // Attempting overlapping reservation must fail
+    let blockedByPending = false;
+    try {
+      await createBooking({
+        courtId,
+        bookingDate: pDate,
+        startTime: "15:00",
+        duration: 1,
+        customerName: "Second Player",
+      });
+    } catch (e: any) {
+      if (e instanceof SlotConflictError) blockedByPending = true;
+    }
+    assert(blockedByPending, "Active booking with pending payment must block other reservations");
+
+    // 2. Transaction rollback: Invalid parameters or errors leave no partial data
+    const bookingCountBefore = await prisma.booking.count({
+      where: { courtId, bookingDate: parseBookingDateMidnight(pDate), startTime: "17:00" },
+    });
+
+    let txFailed = false;
+    try {
+      await createBooking({
+        courtId,
+        bookingDate: pDate,
+        startTime: "17:00",
+        duration: 0, // Invalid duration throws ValidationError
+      });
+    } catch (e: any) {
+      if (e instanceof ValidationError) txFailed = true;
+    }
+    assert(txFailed, "Invalid booking creation should fail with ValidationError");
+
+    const bookingCountAfter = await prisma.booking.count({
+      where: { courtId, bookingDate: parseBookingDateMidnight(pDate), startTime: "17:00" },
+    });
+    assert(bookingCountBefore === bookingCountAfter, "Failed transaction must leave no partial bookings in DB");
   });
 
   console.log("\n=================================================");

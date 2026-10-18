@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthenticatedUser } from "@/lib/auth";
+import {
+  rescheduleBooking,
+  SlotConflictError,
+  ValidationError,
+  NotFoundError,
+  AuthorizationError,
+} from "@/lib/booking-engine";
 
 export async function GET(
   request: Request,
@@ -108,7 +115,24 @@ export async function PATCH(
     }
 
     const body = await request.json().catch(() => ({}));
-    const { status, paymentStatus, notes } = body;
+    const { status, paymentStatus, notes, bookingDate, startTime, duration } = body;
+
+    // Handle rescheduling request
+    if (bookingDate && startTime) {
+      const rescheduled = await rescheduleBooking({
+        bookingId,
+        newBookingDate: bookingDate,
+        newStartTime: startTime,
+        newDuration: duration,
+        rescheduledByUserId: authUser.id,
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: "Booking rescheduled successfully.",
+        booking: rescheduled,
+      });
+    }
 
     const isAdmin = authUser.role === "ADMIN";
     const isOwner = authUser.role === "OWNER" && booking.court.venue.ownerId === authUser.id;
@@ -149,9 +173,37 @@ export async function PATCH(
       booking: updated,
     });
   } catch (error: any) {
+    if (error instanceof SlotConflictError) {
+      return NextResponse.json(
+        { success: false, code: "SLOT_CONFLICT", message: error.message },
+        { status: 409 }
+      );
+    }
+
+    if (error instanceof ValidationError) {
+      return NextResponse.json(
+        { success: false, code: "VALIDATION_ERROR", message: error.message },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof NotFoundError) {
+      return NextResponse.json(
+        { success: false, code: "NOT_FOUND", message: error.message },
+        { status: 404 }
+      );
+    }
+
+    if (error instanceof AuthorizationError) {
+      return NextResponse.json(
+        { success: false, code: "FORBIDDEN", message: error.message },
+        { status: 403 }
+      );
+    }
+
     console.error("PATCH /api/bookings/[id] error:", error);
     return NextResponse.json(
-      { success: false, message: "Failed to update booking." },
+      { success: false, message: error.message || "Failed to update booking." },
       { status: 500 }
     );
   }

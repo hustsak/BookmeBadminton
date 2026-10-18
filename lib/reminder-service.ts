@@ -32,7 +32,6 @@ export async function processReminders(
   // -------------------------------------------------------------
   // Look for bookings in the next 26 hours (to cover both 24h and 2h windows)
   const windowEnd = new Date(nowMs + 26 * 60 * 60 * 1000);
-  const windowStart = new Date(nowMs - 60 * 60 * 1000); // 1 hour past buffer
 
   const upcomingBookings = await prisma.booking.findMany({
     where: {

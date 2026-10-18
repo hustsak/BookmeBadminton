@@ -13,49 +13,15 @@ import {
   User as UserIcon,
 } from "lucide-react";
 
+import { useUnreadNotifications } from "@/hooks";
+
 export function MobileBottomNav() {
   const pathname = usePathname();
   const { user, openLoginModal, bookings, friendlyMatches } = useApp();
-  const [unreadNotifications, setUnreadNotifications] = useState<number>(0);
+  const { unreadCount: unreadNotifications } = useUnreadNotifications(user?.id);
 
   const activeBookingsCount = bookings.filter((b) => b.status === "CONFIRMED").length;
   const openMatchesCount = friendlyMatches.filter((m) => m.status === "OPEN").length;
-
-  const fetchUnreadCount = useCallback(async () => {
-    if (!user) {
-      setUnreadNotifications(0);
-      return;
-    }
-    try {
-      const res = await fetch("/api/notifications/unread-count", {
-        headers: { "x-user-id": user.id.toString() },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setUnreadNotifications(data.count);
-        }
-      }
-    } catch {
-      // quiet fail
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchUnreadCount();
-
-    const handleRefresh = () => {
-      fetchUnreadCount();
-    };
-
-    window.addEventListener("focus", handleRefresh);
-    window.addEventListener("bookme:notification_refresh", handleRefresh);
-
-    return () => {
-      window.removeEventListener("focus", handleRefresh);
-      window.removeEventListener("bookme:notification_refresh", handleRefresh);
-    };
-  }, [fetchUnreadCount]);
 
   // Hide on court details & reservation page where dedicated sticky booking action bar is active
   if (pathname.startsWith("/courts/")) {

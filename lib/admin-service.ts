@@ -244,7 +244,7 @@ export async function getAdminOverviewKPIs(options?: {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
-  let dateFilter: any = {};
+  const dateFilter: any = {};
   if (options?.startDate || options?.endDate) {
     if (options.startDate) {
       dateFilter.gte = new Date(`${options.startDate}T00:00:00.000Z`);

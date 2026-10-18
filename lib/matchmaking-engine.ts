@@ -6,7 +6,6 @@ import {
   MatchStatus,
   SkillLevel,
 } from "@prisma/client";
-import { formatSkillLevel } from "./match-engine";
 
 export interface CompatibilityWeights {
   skill: number;
@@ -54,6 +53,15 @@ export interface CompatibilityResult {
     styleScore: number;
   };
   reasons: string[];
+}
+
+export class DuplicateProfileError extends Error {
+  code = "P2002";
+  statusCode = 409;
+  constructor(message: string = "A player profile already exists for this user.") {
+    super(message);
+    this.name = "DuplicateProfileError";
+  }
 }
 
 export interface UpdateProfileInput {
@@ -457,7 +465,115 @@ export async function getPlayerStats(userId: number): Promise<PlayerStats> {
 }
 
 /**
- * Get or automatically create player profile for a user
+ * Create a new player profile for a user.
+ * Strictly enforces 1-to-1 relationship. Throws DuplicateProfileError (409) if profile exists.
+ * Does not swallow unexpected database errors.
+ */
+export async function createPlayerProfile(
+  userId: number,
+  input?: Partial<UpdateProfileInput>
+) {
+  // Pre-check if profile already exists
+  const existing = await prisma.playerProfile.findUnique({
+    where: { userId },
+  });
+  if (existing) {
+    throw new DuplicateProfileError();
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+  if (!user) {
+    throw new Error("User does not exist.");
+  }
+
+  // Validate display name if provided
+  if (input?.displayName !== undefined) {
+    if (!input.displayName.trim() || input.displayName.trim().length < 2) {
+      throw new Error("Display name must be at least 2 characters.");
+    }
+    if (input.displayName.trim().length > 50) {
+      throw new Error("Display name cannot exceed 50 characters.");
+    }
+  }
+
+  // Validate years of experience if provided
+  if (input?.yearsExperience !== undefined && input?.yearsExperience !== null) {
+    if (input.yearsExperience < 0 || input.yearsExperience > 50) {
+      throw new Error("Years of experience must be between 0 and 50.");
+    }
+  }
+
+  // Validate home venue if provided
+  if (input?.homeVenueId) {
+    const venueExists = await prisma.venue.findUnique({
+      where: { id: input.homeVenueId },
+    });
+    if (!venueExists) {
+      throw new Error("Selected home venue does not exist.");
+    }
+  }
+
+  const defaultVenue = await prisma.venue.findFirst();
+
+  let cleanDays: string[] | undefined;
+  if (input?.preferredDays) {
+    cleanDays = input.preferredDays.map(normalizeDay).filter((d) => VALID_DAYS.includes(d));
+  }
+
+  try {
+    const profile = await prisma.playerProfile.create({
+      data: {
+        userId,
+        displayName: input?.displayName?.trim() || user.name,
+        avatarUrl:
+          input?.avatarUrl ||
+          `https://images.unsplash.com/photo-${1534528741775 + (userId % 100)}?auto=format&fit=crop&w=200&q=80`,
+        skillLevel: input?.skillLevel || PlayerSkillLevel.INTERMEDIATE,
+        playingStyle: input?.playingStyle || PlayingStyle.BOTH,
+        playHand: input?.playHand || PlayHand.RIGHT,
+        preferredDays: cleanDays || ["SATURDAY", "SUNDAY"],
+        preferredTimeStart: input?.preferredTimeStart || "18:00",
+        preferredTimeEnd: input?.preferredTimeEnd || "21:00",
+        homeVenueId: input?.homeVenueId !== undefined ? input.homeVenueId : (defaultVenue?.id || null),
+        preferredVenueIds: input?.preferredVenueIds || (defaultVenue ? [defaultVenue.id] : []),
+        bio: input?.bio?.trim() || "Badminton enthusiast looking for friendly rallies, sparring partners, and good sportsmanship.",
+        yearsExperience: input?.yearsExperience !== undefined ? input.yearsExperience : 2,
+        city: input?.city?.trim() || "Hanoi",
+        district: input?.district?.trim() || defaultVenue?.location || "Thanh Xuan",
+        isProfileComplete: input?.isProfileComplete !== undefined ? input.isProfileComplete : true,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        homeVenue: true,
+      },
+    });
+
+    const stats = await getPlayerStats(userId);
+    return {
+      ...profile,
+      stats,
+    };
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      throw new DuplicateProfileError();
+    }
+    // Re-throw unexpected database errors without swallowing
+    throw err;
+  }
+}
+
+/**
+ * Get or automatically create player profile for a user.
+ * Concurrency-safe: catches P2002 race conditions and recovers gracefully by returning
+ * the committed profile.
  */
 export async function getOrCreatePlayerProfile(userId: number) {
   let profile = await prisma.playerProfile.findUnique({
@@ -484,36 +600,62 @@ export async function getOrCreatePlayerProfile(userId: number) {
 
     const defaultVenue = await prisma.venue.findFirst();
 
-    profile = await prisma.playerProfile.create({
-      data: {
-        userId,
-        displayName: user.name,
-        avatarUrl: `https://images.unsplash.com/photo-${1534528741775 + (userId % 100)}?auto=format&fit=crop&w=200&q=80`,
-        skillLevel: PlayerSkillLevel.INTERMEDIATE,
-        playingStyle: PlayingStyle.BOTH,
-        playHand: PlayHand.RIGHT,
-        preferredDays: ["SATURDAY", "SUNDAY"],
-        preferredTimeStart: "18:00",
-        preferredTimeEnd: "21:00",
-        homeVenueId: defaultVenue?.id || null,
-        preferredVenueIds: defaultVenue ? [defaultVenue.id] : [],
-        bio: "Badminton enthusiast looking for friendly rallies, sparring partners, and good sportsmanship.",
-        yearsExperience: 2,
-        city: "Hanoi",
-        district: defaultVenue?.location || "Thanh Xuan",
-        isProfileComplete: true,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+    try {
+      profile = await prisma.playerProfile.create({
+        data: {
+          userId,
+          displayName: user.name,
+          avatarUrl: `https://images.unsplash.com/photo-${1534528741775 + (userId % 100)}?auto=format&fit=crop&w=200&q=80`,
+          skillLevel: PlayerSkillLevel.INTERMEDIATE,
+          playingStyle: PlayingStyle.BOTH,
+          playHand: PlayHand.RIGHT,
+          preferredDays: ["SATURDAY", "SUNDAY"],
+          preferredTimeStart: "18:00",
+          preferredTimeEnd: "21:00",
+          homeVenueId: defaultVenue?.id || null,
+          preferredVenueIds: defaultVenue ? [defaultVenue.id] : [],
+          bio: "Badminton enthusiast looking for friendly rallies, sparring partners, and good sportsmanship.",
+          yearsExperience: 2,
+          city: "Hanoi",
+          district: defaultVenue?.location || "Thanh Xuan",
+          isProfileComplete: true,
         },
-        homeVenue: true,
-      },
-    });
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          homeVenue: true,
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === "P2002") {
+        // Concurrent race condition: another request created the profile first.
+        // Fetch and return the newly committed profile.
+        profile = await prisma.playerProfile.findUnique({
+          where: { userId },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            homeVenue: true,
+          },
+        });
+        if (!profile) {
+          throw err;
+        }
+      } else {
+        // Unexpected database error: do not swallow
+        throw err;
+      }
+    }
   }
 
   const stats = await getPlayerStats(userId);

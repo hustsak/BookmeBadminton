@@ -574,7 +574,7 @@ export async function joinMatch(matchId: number, userId: number) {
     try {
       const joiningUser = result.participants?.find((p: any) => p.userId === userId)?.user;
       const userName = joiningUser?.name || "A badminton player";
-      const notifRes = await createNotification({
+      await createNotification({
         userId: result.creatorId,
         type: NotificationType.MATCH_JOINED,
         title: `Player Joined: ${result.title}`,
