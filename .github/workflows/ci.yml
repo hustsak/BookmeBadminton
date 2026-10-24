@@ -57,6 +57,9 @@ jobs:
       - name: Apply database migrations to test DB
         run: npx prisma migrate deploy
 
+      - name: Seed test database fixtures
+        run: npm run db:seed
+
       - name: Run TypeScript type check
         run: npx tsc --noEmit
 
